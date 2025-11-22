@@ -5,7 +5,7 @@ set -e
 # Note that these are packages installed to the Arch container used to build the ISO.
 pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub zsh python-pip
+pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 
 pacman --config /configs/pacman-online.conf --noconfirm -Sy monarch-keyring omarchy-keyring
 pacman-key --populate monarch
@@ -68,7 +68,7 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate zsh monarch-keyring omarchy-keyring)
+arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate monarch-keyring omarchy-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
@@ -97,14 +97,6 @@ cp $build_cache_dir/pacman.conf "$build_cache_dir/airootfs/etc/pacman.conf"
 python_packages=(pip) # Always install pip to the offline python directory as it's needed by pipx
 python_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/monarch/install/python.packages" | grep -v '^$'))
 pip download -d $offline_python_dir "${python_packages[@]}"
-
-# Install Oh My ZSH
-OH_MY_ZSH_DIR="$build_cache_dir/airootfs/etc/skel/.oh-my-zsh"
-[ ! -d $OH_MY_ZSH_DIR ] && ZSH=$OH_MY_ZSH_DIR sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-mkdir -p "$OH_MY_ZSH_DIR/plugins"
-[ ! -d $OH_MY_ZSH_DIR/plugins/zsh-completions ] && git clone --depth=1 https://github.com/zsh-users/zsh-completions $OH_MY_ZSH_DIR/plugins/zsh-completions
-[ ! -d $OH_MY_ZSH_DIR/plugins/zsh-autosuggestions ] && git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions $OH_MY_ZSH_DIR/plugins/zsh-autosuggestions
-[ ! -d $OH_MY_ZSH_DIR/plugins/zsh-syntax-highlighting ] && git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting $OH_MY_ZSH_DIR/plugins/zsh-syntax-highlighting
 
 # Finally, we assemble the entire ISO
 mkarchiso -v -w "$build_cache_dir/work/" -o "/out/" "$build_cache_dir/"
