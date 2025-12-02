@@ -87,7 +87,7 @@ install_base_system() {
     --creds user_credentials.json \
     --silent \
     --skip-ntp \
-    --skip-wkd
+    --skip-wkd \
     --skip-wifi-check
 
   # After archinstall sets up the base system but before our installer runs,
