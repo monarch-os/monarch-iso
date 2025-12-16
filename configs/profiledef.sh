@@ -3,7 +3,7 @@
 
 iso_name="monarch"
 iso_label="MONARCH_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
-iso_publisher="Monarch <https://y0no.fr>"
+iso_publisher="Monarch <https://www.monarchlinux.com>"
 iso_application="Monarch OS Installer"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
