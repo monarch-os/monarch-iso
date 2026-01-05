@@ -7,7 +7,11 @@ pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 
-pacman --config /configs/pacman-online.conf --noconfirm -Sy monarch-keyring omarchy-keyring
+if [[ $OMARCHY_MIRROR == "edge" ]]; then
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+else
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+fi
 pacman-key --populate monarch
 pacman-key --populate omarchy
 
@@ -74,7 +78,11 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+if [[ $OMARCHY_MIRROR == "edge" ]]; then
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+else
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+fi
 
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
