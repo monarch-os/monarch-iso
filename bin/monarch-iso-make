@@ -22,10 +22,14 @@ while [[ $# -gt 0 ]]; do
   --dev)
     MONARCH_INSTALLER_REF=dev
     shift
-    ;;    
+    ;;
+  --edge)
+    OMARCHY_MIRROR=edge
+    shift
+    ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge]"
     exit 1
     ;;
   esac
@@ -44,14 +48,16 @@ BUILDER_CMD="${BUILDER_CMD:-docker}"
 
 MONARCH_INSTALLER_REPO="${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}"
 MONARCH_INSTALLER_REF="${MONARCH_INSTALLER_REF:-main}"
+OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
 DOCKER_ARGS=(
   --rm
   --privileged
   -e "MONARCH_INSTALLER_REPO=$MONARCH_INSTALLER_REPO"
   -e "MONARCH_INSTALLER_REF=$MONARCH_INSTALLER_REF"
+  -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
   -e "HOST_UID=$(id -u)"
-  -e "HOST_GID=$(id -g)"  
+  -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"
   -v "$BUILD_ROOT/$BUILD_SCRIPT:/$BUILD_SCRIPT:ro"
   -v "$BUILD_ROOT/archiso:/archiso:ro"
@@ -91,5 +97,5 @@ mv -f "$latest_iso" "$iso_ref"
 # Offer to boot the new build
 if [[ -z "$NO_BOOT_OFFER" ]]; then
   echo
-  gum confirm "Boot $iso_ref?" && monarch-iso-boot "$iso_ref"
+  gum confirm "Boot $iso_ref?" && ./bin/monarch-iso-boot "$iso_ref"
 fi
