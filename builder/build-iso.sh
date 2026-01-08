@@ -7,6 +7,8 @@ pacman-key --init
 pacman --noconfirm -Sy archlinux-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 
+# Install omarchy and monarch keyrings for package verification during build
+# The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
 if [[ $OMARCHY_MIRROR == "edge" ]]; then
   pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy omarchy-keyring monarch-keyring
 else
@@ -29,6 +31,9 @@ rm "$build_cache_dir/airootfs/etc/motd"
 
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
+
+# Persist OMARCHY_MIRROR so it's available at install time
+echo "$OMARCHY_MIRROR" > "$build_cache_dir/airootfs/root/omarchy_mirror"
 
 # Setup Monarch itself
 if [[ -d /monarch ]]; then
