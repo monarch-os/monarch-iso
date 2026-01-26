@@ -272,12 +272,8 @@ boot_partition_size=$((2 * gib))
 main_partition_start=$((boot_partition_size + boot_partition_start))
 main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_reserve))
 
-# Detect T2 Mac and set appropriate kernel
-if lspci -nn 2>/dev/null | grep -q "106b:180[12]"; then
-  kernel_choice="linux-t2"
-else
-  kernel_choice="linux"
-fi
+# Use CachyOS kernel (has T2 support built-in)
+kernel_choice="linux-cachyos"
 
 cat <<-_EOF_ >user_configuration.json
 {
@@ -288,7 +284,7 @@ cat <<-_EOF_ >user_configuration.json
     "bootloader": "Limine",
     "custom_commands": [],
     "disk_config": {
-        "btrfs_options": { 
+        "btrfs_options": {
           "snapshot_config": {
             "type": "Snapper"
           }
