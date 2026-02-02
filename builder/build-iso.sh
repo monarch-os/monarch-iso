@@ -4,20 +4,17 @@ set -e
 
 # Note that these are packages installed to the CachyOS container used to build the ISO.
 pacman-key --init
-pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com
-pacman-key --lsign-key F3B607488DB35A47
-pacman --noconfirm -Sy cachyos-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 
 # Install omarchy and monarch keyrings for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
 if [[ $OMARCHY_MIRROR == "edge" ]]; then
-  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
 else
-  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
 fi
-pacman-key --populate monarch
-pacman-key --populate omarchy
+
+pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
+pacman-key --populate
 
 # Setup build locations
 build_cache_dir="/var/cache"
