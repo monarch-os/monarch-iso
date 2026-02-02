@@ -71,7 +71,7 @@ set_tokyo_night_colors() {
 install_base_system() {
   # Initialize and populate the keyring
   pacman-key --init
-  pacman-key --populate archlinux
+  pacman-key --populate cachyos
   pacman-key --populate monarch
   pacman-key --populate omarchy
 

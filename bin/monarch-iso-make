@@ -87,7 +87,7 @@ if [[ -z "$NO_CACHE" ]]; then
 fi
 
 # Run the builder with assembled args
-${BUILDER_CMD} run "${DOCKER_ARGS[@]}" archlinux/archlinux:latest /$BUILD_SCRIPT
+${BUILDER_CMD} run "${DOCKER_ARGS[@]}" cachyos/cachyos:latest /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)

@@ -2,20 +2,19 @@
 
 set -e
 
-# Note that these are packages installed to the Arch container used to build the ISO.
+# Note that these are packages installed to the CachyOS container used to build the ISO.
 pacman-key --init
-pacman --noconfirm -Sy archlinux-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 
 # Install omarchy and monarch keyrings for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
 if [[ $OMARCHY_MIRROR == "edge" ]]; then
-  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
 else
-  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy omarchy-keyring monarch-keyring
+  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
 fi
-pacman-key --populate monarch
-pacman-key --populate omarchy
+
+pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
+pacman-key --populate
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -72,7 +71,7 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-t2 git gum jq openssl plymouth tzupdate monarch-keyring omarchy-keyring)
+arch_packages=(linux-cachyos git gum jq openssl plymouth tzupdate monarch-keyring omarchy-keyring cachyos-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
