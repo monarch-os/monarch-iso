@@ -126,6 +126,8 @@ EOF
   find /mnt/home/$MONARCH_USER/.local/share/monarch -type f -path "*/bin/*" -exec chmod +x {} \;
   chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/boot.sh 2>/dev/null || true
   chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
+  chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/idle.sh 2>/dev/null || true
+  chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/notification-silencing.sh 2>/dev/null || true
 }
 
 chroot_bash() {

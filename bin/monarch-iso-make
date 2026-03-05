@@ -17,13 +17,11 @@ while [[ $# -gt 0 ]]; do
     ;;
   --local-source)
     LOCAL_SOURCE=1
+    OMARCHY_MIRROR=edge
     shift
     ;;
   --dev)
     MONARCH_INSTALLER_REF=dev
-    shift
-    ;;
-  --edge)
     OMARCHY_MIRROR=edge
     shift
     ;;

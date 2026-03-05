@@ -7,12 +7,7 @@ pacman-key --init
 
 # Install omarchy and monarch keyrings for package verification during build
 # The [omarchy] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
-if [[ $OMARCHY_MIRROR == "edge" ]]; then
-  pacman --config /configs/pacman-online-edge.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
-else
-  pacman --config /configs/pacman-online-stable.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
-fi
-
+pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Sy cachyos-keyring omarchy-keyring monarch-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 pacman-key --populate
 
@@ -82,12 +77,7 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-if [[ $OMARCHY_MIRROR == "edge" ]]; then
-  pacman --config /configs/pacman-online-edge.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-else
-  pacman --config /configs/pacman-online-stable.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-fi
-
+pacman --config /configs/pacman-online-${OMARCHY_MIRROR}.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
 repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
@@ -96,9 +86,9 @@ repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.p
 mkdir -p /var/cache/monarch/mirror
 ln -s "$offline_mirror_dir" "/var/cache/monarch/mirror/offline"
 
-# Copy the pacman.conf to the ISO's /etc directory so the live environment uses our
-# same config when booted
-cp $build_cache_dir/pacman.conf "$build_cache_dir/airootfs/etc/pacman.conf"
+# Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
+# same config when booted.
+cp $build_cache_dir/pacman-offline.conf "$build_cache_dir/airootfs/etc/pacman.conf"
 
 # Install python packages
 python_packages=(pip) # Always install pip to the offline python directory as it's needed by pipx
