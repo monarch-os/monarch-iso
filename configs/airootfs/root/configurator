@@ -1,10 +1,49 @@
 #!/bin/bash
 
-# Rely on Monarch for styling and error handling
-source "$MONARCH_INSTALL/helpers/all.sh"
+DRY_RUN=false
+[[ "${1:-}" == "dry" ]] && DRY_RUN=true
+
+if [[ "$DRY_RUN" == true ]]; then
+  # Stub monarch helpers for local testing without the ISO environment
+  command -v gum >/dev/null || { echo "dry-run requires gum: https://github.com/charmbracelet/gum"; exit 1; }
+
+  TERM_SIZE=$(stty size 2>/dev/null </dev/tty || echo "24 80")
+  export TERM_HEIGHT=$(echo "$TERM_SIZE" | cut -d' ' -f1)
+  export TERM_WIDTH=$(echo "$TERM_SIZE" | cut -d' ' -f2)
+
+  # Use a minimal inline logo for dry-run
+  LOGO_TEXT="███  MONARCH  ███"
+  export LOGO_WIDTH=${#LOGO_TEXT}
+  export LOGO_HEIGHT=1
+  export PADDING_LEFT=$(((TERM_WIDTH - LOGO_WIDTH) / 2))
+  export PADDING_LEFT_SPACES=$(printf "%*s" $PADDING_LEFT "")
+
+  clear_logo() {
+    printf "\033[H\033[2J"
+    gum style --foreground '#8B5CF6' --padding "1 0 0 $PADDING_LEFT" "$LOGO_TEXT"
+  }
+else
+  # Rely on Monarch for styling and error handling
+  source "$MONARCH_INSTALL/helpers/all.sh"
+fi
 
 # Ensure tzupdate is available for guessing timezone
-command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
+if [[ "$DRY_RUN" == false ]]; then
+  command -v tzupdate >/dev/null || sudo pacman -Sy --noconfirm tzupdate
+fi
+
+# -- Monarch brand colors (from monarchlinux.com) --
+MONARCH_PURPLE="#8B5CF6"
+MONARCH_PURPLE_LIGHT="#A78BFA"
+MONARCH_PURPLE_DARK="#7C3AED"
+MONARCH_LAVENDER="#C4B5FD"
+MONARCH_TEXT="#E0E7FF"
+MONARCH_TEXT_DIM="#C7D2FE"
+MONARCH_SURFACE="#312E81"
+MONARCH_YELLOW="#e0af68"
+
+TOTAL_STEPS=3
+CURRENT_STEP=0
 
 abort() {
   gum style "${1:-Aborted installation}"
@@ -14,24 +53,78 @@ abort() {
 }
 
 step() {
+  local step_num="$1"
+  local step_title="$2"
+  CURRENT_STEP=$step_num
+
   clear_logo
+
+  # Progress bar — two colors via ANSI escapes (gum style can't do inline multi-color)
+  local bar_total=$((LOGO_WIDTH - 12))
+  local bar_filled=$((bar_total * step_num / TOTAL_STEPS))
+  local bar_empty=$((bar_total - bar_filled))
+  local filled=$(printf "%${bar_filled}s" | tr ' ' '━')
+  local empty=$(printf "%${bar_empty}s" | tr ' ' '━')
+
   echo
-  gum style "$1"
-  echo
+  printf "%s  \033[38;2;139;92;246m%s/%s  %s\033[38;2;49;46;129m%s\033[0m\n" \
+    "$PADDING_LEFT_SPACES" "$step_num" "$TOTAL_STEPS" "$filled" "$empty"
+
+  # Section title
+  gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --foreground "$MONARCH_TEXT" \
+    --bold \
+    --align center \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "0 2" \
+    --margin "1 0 1 $PADDING_LEFT" \
+    "$step_title"
 }
 
 notice() {
   clear_logo
   echo
-  gum spin --spinner "pulse" --title "$1" -- sleep "${2:-2}"
-  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --foreground "$MONARCH_YELLOW" \
+    --align center \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "0 2" \
+    --margin "1 0 0 $PADDING_LEFT" \
+    "$1"
+  sleep "${2:-2}"
 }
+
+welcome_screen() {
+  clear_logo
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --align center \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "1 4" \
+    --margin "0 0 0 $PADDING_LEFT" \
+    "$(gum style --foreground "$MONARCH_PURPLE_LIGHT" --bold "Welcome to the Monarch installer")" \
+    "" \
+    "$(gum style --foreground "$MONARCH_TEXT_DIM" "This will guide you through setting up your system.")" \
+    "$(gum style --foreground "$MONARCH_TEXT_DIM" "You can abort at any time with Ctrl+C.")" \
+    "" \
+    "$(gum style --foreground "$MONARCH_SURFACE" --faint "Press Enter to continue")"
+  read -r </dev/tty
+}
+
+welcome_screen
 
 # STEP 1: KEYBOARD LAYOUT
 
 keyboard_form() {
-  step "Let's setup your machine..."
-    keyboards=$'Azerbaijani|azerty
+  step 1 "Keyboard Layout"
+
+  keyboards=$'Azerbaijani|azerty
 Belarusian|by
 Belgian|be-latin1
 Bosnian|ba
@@ -95,10 +188,10 @@ keyboard_form
 # STEP 2: USER
 
 user_form() {
-  step "Let's setup your user account..."
+  step 2 "User Account"
 
   while true; do
-    username=$(gum input --placeholder "Alphanumeric without spaces (like dhh)" --prompt.foreground="#845DF9" --prompt "Username> ") || abort
+    username=$(gum input --placeholder "Alphanumeric without spaces (like dhh)" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Username> ") || abort
 
     if [[ "$username" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
       break
@@ -108,8 +201,8 @@ user_form() {
   done
 
   while true; do
-    password=$(gum input --placeholder "Used for user + root + encryption" --prompt.foreground="#845DF9" --password --prompt "Password> ") || abort
-    password_confirmation=$(gum input --placeholder "Must match the password you just typed" --prompt.foreground="#845DF9" --password --prompt "Confirm> ") || abort
+    password=$(gum input --placeholder "Used for user + root + encryption" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --password --prompt "Password> ") || abort
+    password_confirmation=$(gum input --placeholder "Must match the password you just typed" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --password --prompt "Confirm> ") || abort
 
     if [[ -n "$password" && "$password" == "$password_confirmation" ]]; then
       break
@@ -123,11 +216,11 @@ user_form() {
   # Hash the password using yescrypt
   password_hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 
-  full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Full name> ")
-  email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="#845DF9" --prompt "Email address> ")
+  full_name=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Full name> ")
+  email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Email address> ")
 
   while true; do
-    hostname=$(gum input --placeholder "Alphanumeric without spaces (or return for 'monarch')" --prompt.foreground="#845DF9" --prompt "Hostname> ")
+    hostname=$(gum input --placeholder "Alphanumeric without spaces (or return for 'monarch')" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Hostname> ")
 
     if [[ "$hostname" =~ ^[A-Za-z_][A-Za-z0-9_-]*\$?$ ]]; then
       break
@@ -152,16 +245,24 @@ user_form() {
 user_form
 
 while true; do
-  # Add manual padding since gum table -p doesn't respect padding
-  echo -e "Field,Value
-Username,$username
-Password,$(printf "%${#password}s" | tr ' ' '*')
-Full name,${full_name:-[Skipped]}
-Email address,${email_address:-[Skipped]}
-Hostname,$hostname
-Timezone,$timezone
-Keyboard,$keyboard" |
-    gum table -s "," -p | sed "s/^/${PADDING_LEFT_SPACES}/"
+  clear_logo
+
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "1 2" \
+    --margin "0 0 0 $PADDING_LEFT" \
+    "$(gum style --foreground "$MONARCH_PURPLE_LIGHT" --bold "  Configuration Summary")" \
+    "" \
+    "$(printf '  %-16s %s' 'Username' "$username")" \
+    "$(printf '  %-16s %s' 'Password' "$(printf "%${#password}s" | tr ' ' '*')")" \
+    "$(printf '  %-16s %s' 'Full name' "${full_name:-[Skipped]}")" \
+    "$(printf '  %-16s %s' 'Email' "${email_address:-[Skipped]}")" \
+    "$(printf '  %-16s %s' 'Hostname' "$hostname")" \
+    "$(printf '  %-16s %s' 'Timezone' "$timezone")" \
+    "$(printf '  %-16s %s' 'Keyboard' "$keyboard")"
 
   echo
   if gum confirm --negative "No, change it" "Does this look right?"; then
@@ -206,7 +307,15 @@ get_disk_info() {
 }
 
 disk_form() {
-  step "Let's select where to install Monarch..."
+  step 3 "Disk Selection"
+
+  if [[ "$DRY_RUN" == true ]]; then
+    # Fake disk list for local testing
+    local disk_options="/dev/sda (500G) - Fake HDD"$'\n'"/dev/nvme0n1 (1T) - Fake NVMe"
+    selected_display=$(echo "$disk_options" | gum choose --header "Select install disk (dry-run)") || abort
+    disk=$(echo "$selected_display" | awk '{print $1}')
+    return
+  fi
 
   # Don't offer the install media as an option (Arch ISO mounts it here)
   local exclude_disk
@@ -237,7 +346,21 @@ disk_form() {
 disk_form
 
 while true; do
-  gum style "Everything will be overwritten. There is no recovery possible."
+  clear_logo
+
+  # Warning in a double-bordered box
+  echo
+  gum style \
+    --border double \
+    --border-foreground "$MONARCH_YELLOW" \
+    --align center \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "1 2" \
+    --margin "0 0 0 $PADDING_LEFT" \
+    "$(gum style --foreground "$MONARCH_YELLOW" --bold "Warning")" \
+    "" \
+    "$(gum style --foreground "$MONARCH_TEXT" "Everything on ${disk} will be overwritten.")" \
+    "$(gum style --foreground "$MONARCH_SURFACE" --faint "There is no recovery possible.")"
 
   echo
   if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
@@ -247,7 +370,21 @@ while true; do
   fi
 done
 
-clear
+# Launch screen
+clear_logo
+echo
+gum style \
+  --border rounded \
+  --border-foreground "$MONARCH_PURPLE_DARK" \
+  --foreground "$MONARCH_PURPLE_LIGHT" \
+  --bold \
+  --align center \
+  --width $((LOGO_WIDTH - 2)) \
+  --padding "1 2" \
+  --margin "0 0 0 $PADDING_LEFT" \
+  "Preparing Monarch installation..."
+
+echo
 
 # Save user full name and email address, so the autostart can
 # set them as MONARCH_USER_NAME and MONARCH_USER_EMAIL
@@ -275,7 +412,11 @@ cat <<-_EOF_ >user_credentials.json
 _EOF_
 
 # Setup partition layout
-disk_size=$(lsblk -bdno SIZE "$disk")
+if [[ "$DRY_RUN" == true ]]; then
+  disk_size=$((512 * 1024 * 1024 * 1024)) # Fake 512G disk
+else
+  disk_size=$(lsblk -bdno SIZE "$disk")
+fi
 mib=$((1024 * 1024))
 gib=$((mib * 1024))
 disk_size_in_mib=$((disk_size / mib * mib)) # Rounds to nearest MiB
@@ -407,18 +548,34 @@ cat <<-_EOF_ >user_configuration.json
 }
 _EOF_
 
-if [[ $1 == "dry" ]]; then
-  echo -e "User Configuration:"
-  cat user_configuration.json
+if [[ "$DRY_RUN" == true ]]; then
+  clear_logo
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --foreground "$MONARCH_PURPLE_LIGHT" \
+    --bold \
+    --align center \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "0 2" \
+    --margin "0 0 1 $((PADDING_LEFT - 1))" \
+    "Dry-run complete"
 
-  echo -e "\n\nUser Credentials:"
-  cat user_credentials.json
+  gum style --foreground "$MONARCH_TEXT_DIM" --padding "0 0 0 $PADDING_LEFT" "Generated files:"
+  for f in user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt; do
+    gum style --foreground "$MONARCH_SURFACE" --padding "0 0 0 $PADDING_LEFT" "  $f"
+  done
+  echo
 
-  echo -e "\n\nUser Full Name:"
-  cat user_full_name.txt
+  if gum confirm "View generated configuration?"; then
+    echo
+    gum style --foreground "$MONARCH_PURPLE_LIGHT" --bold --padding "0 0 0 $PADDING_LEFT" "user_configuration.json"
+    gum format -t code < user_configuration.json
+    echo
+    gum style --foreground "$MONARCH_PURPLE_LIGHT" --bold --padding "0 0 0 $PADDING_LEFT" "user_credentials.json"
+    gum format -t code < user_credentials.json
+  fi
 
-  echo -e "\nUser Email Address:"
-  cat user_email_address.txt
-
-  rm user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt
+  rm -f user_configuration.json user_credentials.json user_full_name.txt user_email_address.txt
 fi
