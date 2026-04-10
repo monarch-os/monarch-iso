@@ -32,7 +32,7 @@ fi
 qemu-system-x86_64 \
   -cpu host -enable-kvm -machine q35,accel=kvm \
   -smp "$(nproc)" \
-  -m 8192 \
+  -m 4096 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
   -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.4m.fd \
   -drive file="$DISK",format=qcow2,if=none,id=drive0 \
