@@ -248,21 +248,24 @@ while true; do
   clear_logo
 
   echo
-  gum style \
-    --border rounded \
-    --border-foreground "$MONARCH_PURPLE_DARK" \
-    --width $((LOGO_WIDTH - 2)) \
-    --padding "1 2" \
-    --margin "0 0 0 $PADDING_LEFT" \
-    "$(gum style --foreground "$MONARCH_PURPLE_LIGHT" --bold "  Configuration Summary")" \
-    "" \
+  # Build summary content without nested gum style (ANSI codes break width calculation)
+  summary_content=$(printf '%s\n\n%s\n%s\n%s\n%s\n%s\n%s\n%s' \
+    "Configuration Summary" \
     "$(printf '  %-16s %s' 'Username' "$username")" \
     "$(printf '  %-16s %s' 'Password' "$(printf "%${#password}s" | tr ' ' '*')")" \
     "$(printf '  %-16s %s' 'Full name' "${full_name:-[Skipped]}")" \
     "$(printf '  %-16s %s' 'Email' "${email_address:-[Skipped]}")" \
     "$(printf '  %-16s %s' 'Hostname' "$hostname")" \
     "$(printf '  %-16s %s' 'Timezone' "$timezone")" \
-    "$(printf '  %-16s %s' 'Keyboard' "$keyboard")"
+    "$(printf '  %-16s %s' 'Keyboard' "$keyboard")")
+
+  echo "$summary_content" | gum style \
+    --border rounded \
+    --border-foreground "$MONARCH_PURPLE_DARK" \
+    --foreground "$MONARCH_TEXT" \
+    --width $((LOGO_WIDTH - 2)) \
+    --padding "1 2" \
+    --margin "0 0 0 $PADDING_LEFT"
 
   echo
   if gum confirm --negative "No, change it" "Does this look right?"; then
@@ -526,9 +529,8 @@ cat <<-_EOF_ >user_configuration.json
     "mirror_config": {
         "custom_repositories": [],
         "custom_servers": [
-            {"url": "https://mirror.omarchy.org/\$repo/os/\$arch"},
-            {"url": "https://mirror.rackspace.com/archlinux/\$repo/os/\$arch"},
-            {"url": "https://geo.mirror.pkgbuild.com/\$repo/os/\$arch"}
+            {"url": "https://mirror.cachyos.org/repo/\$arch/\$repo"},
+            {"url": "https://cdn.cachyos.org/repo/\$arch/\$repo"}
         ],
         "mirror_regions": {},
         "optional_repositories": []
@@ -536,6 +538,7 @@ cat <<-_EOF_ >user_configuration.json
     "packages": [
         "base-devel",
         "git",
+        "cachyos-keyring",
         "monarch-keyring",
         "omarchy-keyring"
     ],
