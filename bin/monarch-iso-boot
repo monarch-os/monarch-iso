@@ -3,19 +3,41 @@
 set -e
 
 ISO="$1"
-REUSE="$2"
+REUSE=""
+OFFLINE=""
+
+for arg in "${@:2}"; do
+  case "$arg" in
+    reuse) REUSE="reuse" ;;
+    offline) OFFLINE="offline" ;;
+  esac
+done
 
 if [ $# -eq 0 ]; then
   ISO=$(ls -t release/*.iso 2>/dev/null | gum choose --header "Select ISO to boot")
   if gum confirm --default=false "Reuse existing disk?"; then
     REUSE="reuse"
   fi
+  if gum confirm --default=false "Boot offline (no network)?"; then
+    OFFLINE="offline"
+  fi
 fi
 
 if [ -z "$ISO" ]; then
-  echo "Usage: monarch-iso-boot [release/monarch.iso] [reuse]"
-  echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh)"
+  echo "Usage: monarch-iso-boot [release/monarch.iso] [reuse] [offline]"
+  echo "  reuse    Reuse existing disk image at /tmp/monarch-iso-boot.qcow2"
+  echo "  offline  Boot without any network interface (test offline install)"
+  echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh, online mode only)"
   exit 1
+fi
+
+if [ "$OFFLINE" = "offline" ]; then
+  NET_ARGS=(-nic none)
+else
+  NET_ARGS=(
+    -netdev user,id=net0,hostfwd=tcp::2222-:22
+    -device virtio-net-pci,netdev=net0
+  )
 fi
 
 if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
@@ -42,6 +64,5 @@ qemu-system-x86_64 \
   -device virtio-vga-gl \
   -display gtk,gl=on \
   -usb -device usb-tablet \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-  -device virtio-net-pci,netdev=net0 \
+  "${NET_ARGS[@]}" \
   -boot menu=on
