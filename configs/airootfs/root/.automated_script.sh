@@ -5,7 +5,6 @@ use_monarch_helpers() {
   export MONARCH_PATH="/root/monarch"
   export MONARCH_INSTALL="/root/monarch/install"
   export MONARCH_INSTALL_LOG_FILE="/var/log/monarch-install.log"
-  export OMARCHY_MIRROR="$(cat /root/omarchy_mirror)"
   source /root/monarch/install/helpers/all.sh
 }
 
@@ -73,7 +72,6 @@ install_base_system() {
   pacman-key --init
   pacman-key --populate cachyos
   pacman-key --populate monarch
-  pacman-key --populate omarchy
 
   # Sync the offline database so pacman can find packages
   pacman -Sy --noconfirm
@@ -136,7 +134,6 @@ chroot_bash() {
     env MONARCH_CHROOT_INSTALL=1 \
     MONARCH_USER_NAME="$(<user_full_name.txt)" \
     MONARCH_USER_EMAIL="$(<user_email_address.txt)" \
-    OMARCHY_MIRROR="$OMARCHY_MIRROR" \
     USER="$MONARCH_USER" \
     HOME="/home/$MONARCH_USER" \
     /bin/bash "$@"
