@@ -538,9 +538,9 @@ cat <<-_EOF_ >user_configuration.json
     "packages": [
         "base-devel",
         "git",
+        "archlinux-keyring",
         "cachyos-keyring",
-        "monarch-keyring",
-        "omarchy-keyring"
+        "monarch-keyring"
     ],
     "profile_config": {
         "gfx_driver": null,

@@ -17,17 +17,15 @@ while [[ $# -gt 0 ]]; do
     ;;
   --local-source)
     LOCAL_SOURCE=1
-    OMARCHY_MIRROR=edge
     shift
     ;;
   --dev)
     MONARCH_INSTALLER_REF=dev
-    OMARCHY_MIRROR=edge
     shift
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev] [--edge]"
+    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev]"
     exit 1
     ;;
   esac
@@ -49,14 +47,12 @@ BUILDER_CMD="${BUILDER_CMD:-docker}"
 
 MONARCH_INSTALLER_REPO="${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}"
 MONARCH_INSTALLER_REF="${MONARCH_INSTALLER_REF:-main}"
-OMARCHY_MIRROR="${OMARCHY_MIRROR:-stable}"
 
 DOCKER_ARGS=(
   --rm
   --privileged
   -e "MONARCH_INSTALLER_REPO=$MONARCH_INSTALLER_REPO"
   -e "MONARCH_INSTALLER_REF=$MONARCH_INSTALLER_REF"
-  -e "OMARCHY_MIRROR=$OMARCHY_MIRROR"
   -e "HOST_UID=$(id -u)"
   -e "HOST_GID=$(id -g)"
   -v "$BUILD_RELEASE_PATH/:/out/"

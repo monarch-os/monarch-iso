@@ -2,9 +2,9 @@
 monarch-pkg-add rclone
 mkdir -p ~/.config/rclone
 
-access_key=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/access_key_id" --account Omarchy)
-secret_access_key=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/secret_access_key" --account Omarchy)
-endpoint=$(op read "op://Shared/Cloudflare Buckets/iso.omarchy.org/endpoint" --account Omarchy)
+access_key=$(op read "op://Shared/Cloudflare Buckets/iso.monarchlinux.com/access_key_id" --account Monarch)
+secret_access_key=$(op read "op://Shared/Cloudflare Buckets/iso.monarchlinux.com/secret_access_key" --account Monarch)
+endpoint=$(op read "op://Shared/Cloudflare Buckets/iso.monarchlinux.com/endpoint" --account Monarch)
 
 cat > ~/.config/rclone/rclone.conf << EOF
 [Monarch]
