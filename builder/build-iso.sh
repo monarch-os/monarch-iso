@@ -5,9 +5,12 @@ set -e
 # Note that these are packages installed to the CachyOS container used to build the ISO.
 pacman-key --init
 
-# Install the monarch keyring for package verification during build
-# The [monarch] repo is defined in /configs/pacman-online.conf with SigLevel = Optional TrustAll
-pacman --config /configs/pacman-online.conf --noconfirm -Sy cachyos-keyring monarch-keyring
+# Install the keyrings for package verification during build.
+# core/extra/multilib are served (via archlinux.cachyos.org) as vanilla Arch
+# packages signed by Arch developer keys, so archlinux-keyring is required to
+# verify them at -Syw download time. The [monarch] repo is defined in
+# /configs/pacman-online.conf with SigLevel = Optional TrustAll.
+pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
 pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
 pacman-key --populate
 
@@ -63,7 +66,7 @@ mkdir -p "$build_cache_dir/airootfs/opt/packages/"
 cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 
 # Add our additional packages to packages.x86_64
-arch_packages=(linux-cachyos git gum jq openssl plymouth tzupdate monarch-keyring cachyos-keyring)
+arch_packages=(linux-cachyos git gum jq openssl plymouth tzupdate archlinux-keyring monarch-keyring cachyos-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
 # Build list of all the packages needed for the offline mirror
