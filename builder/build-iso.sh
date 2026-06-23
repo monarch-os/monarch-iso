@@ -6,12 +6,12 @@ set -e
 pacman-key --init
 
 # Install the keyrings for package verification during build.
-# core/extra/multilib are served (via archlinux.cachyos.org) as vanilla Arch
+# core/extra/multilib are served from the Cachy mirrors as vanilla Arch
 # packages signed by Arch developer keys, so archlinux-keyring is required to
 # verify them at -Syw download time. The [monarch] repo is defined in
 # /configs/pacman-online.conf with SigLevel = Optional TrustAll.
 pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
-pacman --noconfirm -Sy archiso git sudo base-devel jq grub python-pip
+pacman --noconfirm -Syu archiso git sudo base-devel jq grub python-pip
 pacman-key --populate
 
 # Setup build locations
