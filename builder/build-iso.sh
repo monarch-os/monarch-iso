@@ -6,13 +6,11 @@ set -e
 pacman-key --init
 
 # Install the keyrings for package verification during build.
-# core/extra/multilib are served from the official Arch mirrors as vanilla Arch
+# core/extra/multilib are served from the Cachy mirrors as vanilla Arch
 # packages signed by Arch developer keys, so archlinux-keyring is required to
 # verify them at -Syw download time. The [monarch] repo is defined in
 # /configs/pacman-online.conf with SigLevel = Optional TrustAll.
 pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
-# Full upgrade (not partial -Sy): pulls python 3.14 + its newer expat together,
-# else pyexpat fails with an undefined-symbol ABI skew at pip download time.
 pacman --noconfirm -Syu archiso git sudo base-devel jq grub python-pip
 pacman-key --populate
 
