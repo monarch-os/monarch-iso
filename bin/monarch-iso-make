@@ -81,6 +81,10 @@ if [[ -z "$NO_CACHE" ]]; then
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/monarch since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/monarch")
+else
+  # The locally cached :latest image is a cache too — docker run never
+  # re-checks the registry for it, so refresh it when building cold.
+  DOCKER_ARGS+=(--pull=always)
 fi
 
 # Run the builder with assembled args

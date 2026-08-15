@@ -88,7 +88,12 @@ QEMU's default serial port makes the guest kernel register `ttyS0` as a console.
 
 More generally: when a symptom appears in a test VM, confirm it on real hardware before changing anything in `monarch/`.
 
+# The Live Kernel
+
+The ISO boots **`linux-cachyos`** on every path — systemd-boot (`configs/efiboot/`), GRUB (`configs/grub/`) and syslinux. Keep them in sync when changing kernels; a mismatch is silent, because the archiso HOOKS live in the global drop-in `configs/airootfs/etc/mkinitcpio.conf.d/archiso.conf` and therefore apply to *any* kernel installed in the airootfs, so a stray second kernel still produces a bootable image.
+
+That is exactly how the fork carried Omarchy's `linux-t2` naming long after switching to CachyOS: releng's stock `linux` was still installed and its ~250 MB archiso initramfs shipped alongside the one nobody used. `builder/build-iso.sh` now strips `linux` and `broadcom-wl` from `packages.x86_64` — `broadcom-wl` is the only releng package that hard-depends on the stock kernel, so removing the kernel alone would let pacman drag it back in. Neither is useful: the install is fully offline and the live environment needs no Wi-Fi driver.
+
 # Known Inconsistencies
 
-- `configs/grub/grub.cfg` and `configs/efiboot/loader/entries/01-archiso-x86_64-linux.conf` still boot `linux-t2`, while `syslinux/` and `grub/loopback.cfg` boot `linux-cachyos`. Both kernels (and both ~250 MB initramfs) end up on the ISO. `configs/airootfs/etc/mkinitcpio.d/linux.preset` also still names `linux-t2`.
-- `bin/monarch-iso-release` has a `BULD_VERSION` typo, forces `MONARCH_INSTALLER_REF=master` (the branch is `main`), and its `--no-make` handling conflicts with reading the version from `$1`.
+- `bin/monarch-iso-release` has a `BULD_VERSION` typo, forces `MONARCH_INSTALLER_REF=master` (no such branch — `monarch-os/monarch` has only `dev`), and its `--no-make` handling conflicts with reading the version from `$1`.
