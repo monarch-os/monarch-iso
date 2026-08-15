@@ -26,6 +26,12 @@ mkdir -p $offline_python_dir/
 cp -r /archiso/configs/releng/* $build_cache_dir/
 rm "$build_cache_dir/airootfs/etc/motd"
 
+# The ISO installs offline from the bundled mirror, so reflector has nothing to
+# do but stall at boot trying to fetch a mirrorlist.
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/reflector.service"
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
+rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
+
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
 

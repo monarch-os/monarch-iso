@@ -220,15 +220,15 @@ user_form() {
   email_address=$(gum input --placeholder "Used for git authentication (hit return to skip)" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Email address> ")
 
   while true; do
-    hostname=$(gum input --placeholder "Alphanumeric without spaces (or return for 'monarch')" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Hostname> ")
+    hostname=$(gum input --placeholder "Letters, digits, and dashes (or return for 'monarch')" --prompt.foreground="$MONARCH_PURPLE_LIGHT" --prompt "Hostname> ")
 
-    if [[ "$hostname" =~ ^[A-Za-z_][A-Za-z0-9_-]*\$?$ ]]; then
+    if [[ "$hostname" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
       break
     elif [[ -z $hostname ]]; then
       hostname="monarch"
       break
     else
-      notice "Hostname must be alphanumeric using dashes or underscores but no spaces" 1
+      notice "Hostname must be 1-63 letters, digits, or dashes, and cannot start or end with a dash" 1
     fi
   done
 
@@ -304,9 +304,37 @@ get_disk_info() {
   # Format display string
   local display="$device"
   [[ -n "$size" ]] && display="$display ($size)"
-  [[ -n "$model" ]] && display="$display - $model"
+  [[ -n "$label" ]] && display="$display - $label"
+
+  # Append compact partition summary so the user sees what gets overwritten
+  local part_summary
+  part_summary=$(lsblk -nro TYPE,NAME,FSTYPE,MOUNTPOINT "$device" 2>/dev/null |
+    awk '$1=="part" { printf "%s%s%s", s, ($3==""?"unknown":$3), ($4==""?"":"("$4")"); s=", " }')
+  [[ -n "$part_summary" ]] && display+=" [$part_summary]"
 
   echo "$display"
+}
+
+get_root_disk() {
+  local device="$1"
+  local parent
+
+  [[ -n $device ]] || return 1
+
+  # /run/archiso/bootmnt usually resolves to the boot partition, but the
+  # installer picker works with whole disks. Walk back to the parent disk so
+  # the install media itself never shows up as a wipe target.
+  device=$(readlink -f "$device" 2>/dev/null || printf "%s\n" "$device")
+
+  while true; do
+    parent=$(lsblk -dno PKNAME "$device" 2>/dev/null | tail -n1)
+    [[ -n $parent ]] || break
+    device="/dev/$parent"
+  done
+
+  if [[ $(lsblk -dno TYPE "$device" 2>/dev/null) == "disk" ]]; then
+    printf "%s\n" "$device"
+  fi
 }
 
 disk_form() {
@@ -320,9 +348,11 @@ disk_form() {
     return
   fi
 
-  # Don't offer the install media as an option (Arch ISO mounts it here)
+  # Don't offer the install media as an option (the ISO mounts it here)
+  local boot_source
   local exclude_disk
-  exclude_disk=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+  boot_source=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)
+  exclude_disk=$(get_root_disk "$boot_source")
 
   # List all installable disks, excluding the boot device if present
   local available_disks
@@ -540,7 +570,8 @@ cat <<-_EOF_ >user_configuration.json
         "git",
         "archlinux-keyring",
         "cachyos-keyring",
-        "monarch-keyring"
+        "monarch-keyring",
+        "snapper"
     ],
     "profile_config": {
         "gfx_driver": null,
