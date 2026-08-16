@@ -19,6 +19,8 @@ When porting anything from `omarchy-iso`, assume every `archlinux`, `linux-t2`, 
 | `bin/` | Host-side commands: `monarch-iso-make`, `-boot`, `-release`, `-sign`, `-upload`, `-rclone-config`, plus `monarch-vm` (QEMU snapshot manager) |
 | `builder/build-iso.sh` | Runs **inside** the CachyOS container; assembles airootfs and calls `mkarchiso` |
 | `builder/archinstall.packages` | Extra packages fed to the offline mirror for archinstall itself |
+| `builder/prune-offline-mirror.sh` | Trims the offline mirror to the exact resolved transaction before indexing |
+| `test/` | `bash test/<name>-test.sh`; no framework, no container needed |
 | `configs/` | Overlaid on top of `archiso/configs/releng/` — boot entries, pacman configs, `profiledef.sh`, airootfs |
 | `configs/airootfs/root/configurator` | The `gum` TUI the user sees at boot; writes `user_configuration.json` / `user_credentials.json` |
 | `configs/airootfs/root/.automated_script.sh` | Autostarted on tty1; runs the configurator, then archinstall, then the Monarch installer in the chroot |
@@ -38,6 +40,14 @@ Both are bind-mounted into `/mnt` before the chroot install. `configs/pacman-off
 - Adding a package to the installer means adding it to one of the `.packages` lists, or it simply will not exist at install time.
 - Test the offline path explicitly: `./bin/monarch-iso-boot <iso> offline` boots QEMU with `-nic none`.
 
+The mirror is **pruned to the exact transaction** before it is indexed. The build cache is per-day but shared by every build that day, so it accumulates superseded versions and packages that have left the lists or the dependency closure. `build-iso.sh` re-resolves the filenames with `pacman -S --print --print-format '%f'` against the *same* already-synced dbpath (plain `-S` — a re-sync could pick a different version than the one `-Syw` downloaded), then pipes them to `builder/prune-offline-mirror.sh`.
+
+This is a correctness fix as much as a size one: with several versions of a package present, `repo-add` indexes whichever the shell glob hands it first — lexical order, not version order, so pkgrel `-9` can shadow `-15`. The db is now rebuilt from scratch each time rather than added to.
+
+The pruner refuses to delete anything if the selection is empty or if any selected package is missing from the mirror, so a partial resolution can never turn a warm-cache build into a broken ISO. `bash test/prune-offline-mirror-test.sh` covers those guards.
+
+Ported from `omarchy-iso` `f66b6fc`, which lives on the `quattro` line, **not** on upstream `main`. Only the mechanism was taken: the surrounding code there assumes release channels (`pacman-online-${OMARCHY_MIRROR}.conf`) and locally-built packages (`LOCAL_OMARCHY_BUILD`), neither of which exists here. The upstream Python test was rewritten in bash to match the workspace convention.
+
 # Build / Test
 
 ```bash
@@ -54,6 +64,7 @@ Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's
 A full build takes a long time and downloads several GB. Before rebuilding, cheap checks that catch most mistakes:
 
 - `bash -n` on every script you touched
+- `bash test/prune-offline-mirror-test.sh` — the only real test suite here; runs in a tempdir, needs no container
 - The configurator has a dry-run: `bash configs/airootfs/root/configurator dry` renders the TUI and prints the generated JSON without touching a disk (needs `gum` on the host)
 - `jq empty user_configuration.json` on that dry-run output — a malformed heredoc silently breaks the install otherwise
 

@@ -98,7 +98,31 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
-repo-add --new "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+
+# Resolve the exact filenames chosen by the databases just synced above, and
+# throw away everything else the cache holds. The build cache is per-day but
+# shared by every build that day, so it accumulates superseded versions and
+# packages that have since left the lists or the dependency closure. Note the
+# plain -S: re-syncing here could resolve a different version than the one the
+# -Syw above actually downloaded.
+if ! resolved_package_files="$(
+  pacman --config /configs/pacman-online.conf --noconfirm \
+    --dbpath /tmp/offlinedb -S --print --print-format '%f' "${all_packages[@]}"
+)"; then
+  echo "ERROR: could not resolve the package files required by the offline mirror" >&2
+  exit 1
+fi
+
+printf '%s\n' "$resolved_package_files" |
+  bash /builder/prune-offline-mirror.sh "$offline_mirror_dir"
+
+# Rebuild the index from scratch rather than adding to it. With several versions
+# of a package in the directory, repo-add indexes whichever the shell glob hands
+# it first — lexical order, not version order, so pkgrel -9 can shadow -15.
+# Pruning first makes the selection unambiguous; dropping the old db keeps sizes
+# and checksums in step with the files actually shipped.
+rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
+repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/monarch/mirror/offline in the container,
