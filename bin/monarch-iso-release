@@ -1,31 +1,73 @@
 #!/bin/bash
 
-if [ $# -eq 0 ]; then
-  echo "Usage: monarch-iso-release [version]"
-  exit 1
-fi
+set -euo pipefail
 
 BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
-BULD_VERSION="$1"
 
-# Make ISOs
-if [[ $1 != "--no-make" ]]; then
-  echo -e "\e[32mMaking master ISO\e[0m"
-  MONARCH_INSTALLER_REF=master monarch-iso-make --no-cache --no-boot-offer
+# The ref the ISO bundles. Overridable, but `dev` is the only long-lived branch
+# on monarch-os/monarch and is its default HEAD.
+INSTALLER_REF="${MONARCH_INSTALLER_REF:-dev}"
+
+NO_MAKE=""
+BUILD_VERSION=""
+
+usage() {
+  echo "Usage: monarch-iso-release [--no-make] <version>"
+  echo "  --no-make   Reuse the newest matching ISO instead of rebuilding"
+  echo "  <version>   Release version, e.g. 1.2.0 -> release/monarch-1.2.0.iso"
+  echo
+  echo "Set MONARCH_INSTALLER_REF to bundle a ref other than '$INSTALLER_REF'."
+  exit 1
+}
+
+while (($# > 0)); do
+  case $1 in
+  --no-make)
+    NO_MAKE=1
+    shift
+    ;;
+  -*)
+    echo "Unknown option: $1" >&2
+    usage
+    ;;
+  *)
+    # A second positional means the caller passed a flag we don't know as a
+    # version, or two versions. Either way the intent is unclear.
+    [[ -z $BUILD_VERSION ]] || usage
+    BUILD_VERSION="$1"
+    shift
+    ;;
+  esac
+done
+
+[[ -n $BUILD_VERSION ]] || usage
+
+# Make the ISO
+if [[ -z $NO_MAKE ]]; then
+  echo -e "\e[32mMaking $INSTALLER_REF ISO\e[0m"
+  MONARCH_INSTALLER_REF="$INSTALLER_REF" \
+    "$BUILD_ROOT/bin/monarch-iso-make" --no-cache --no-boot-offer
 else
-  echo -e "\e[31mSkipping remaking ISOs\e[0m"
+  echo -e "\e[31mSkipping remaking ISO\e[0m"
 fi
 
-# Sign and upload master ISO
-latest_master_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-master.iso | head -n1)
-release_master_iso="$BUILD_RELEASE_PATH/monarch-$BULD_VERSION.iso"
-cp "$latest_master_iso" "$release_master_iso"
+# monarch-iso-make names its output <date>-<arch>-<ref>.iso
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso 2>/dev/null | head -n1 || true)
 
-echo -e "\e[32mSigning master ISO\e[0m"
-monarch-iso-sign "$release_master_iso"
+if [[ -z $latest_iso ]]; then
+  echo "No ISO matching $BUILD_RELEASE_PATH/*x86_64-$INSTALLER_REF.iso" >&2
+  [[ -n $NO_MAKE ]] && echo "Drop --no-make to build one." >&2
+  exit 1
+fi
 
-master_sha=$(sha256sum "$release_master_iso")
-echo -e "\e[32mSHA256 for master ISO: $master_sha\e[0m"
+release_iso="$BUILD_RELEASE_PATH/monarch-$BUILD_VERSION.iso"
+cp "$latest_iso" "$release_iso"
 
-monarch-iso-upload "$release_master_iso"
+echo -e "\e[32mSigning $(basename "$release_iso")\e[0m"
+"$BUILD_ROOT/bin/monarch-iso-sign" "$release_iso"
+
+iso_sha=$(sha256sum "$release_iso")
+echo -e "\e[32mSHA256: $iso_sha\e[0m"
+
+"$BUILD_ROOT/bin/monarch-iso-upload" "$release_iso"

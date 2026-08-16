@@ -47,7 +47,9 @@ Both are bind-mounted into `/mnt` before the chroot install. `configs/pacman-off
 ./bin/monarch-iso-release <ver>   # make + sign + upload
 ```
 
-Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `main`). `--local-source` bind-mounts `$MONARCH_PATH` instead of cloning.
+Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`). `--local-source` bind-mounts `$MONARCH_PATH` instead of cloning.
+
+`dev` is the default because it is the only long-lived branch on `monarch-os/monarch` and its remote HEAD — there is no `main` or `master`. Check with `git ls-remote --heads` before assuming otherwise; a ref that does not exist fails the clone inside the container and aborts the build.
 
 A full build takes a long time and downloads several GB. Before rebuilding, cheap checks that catch most mistakes:
 
@@ -94,6 +96,14 @@ The ISO boots **`linux-cachyos`** on every path — systemd-boot (`configs/efibo
 
 That is exactly how the fork carried Omarchy's `linux-t2` naming long after switching to CachyOS: releng's stock `linux` was still installed and its ~250 MB archiso initramfs shipped alongside the one nobody used. `builder/build-iso.sh` now strips `linux` and `broadcom-wl` from `packages.x86_64` — `broadcom-wl` is the only releng package that hard-depends on the stock kernel, so removing the kernel alone would let pacman drag it back in. Neither is useful: the install is fully offline and the live environment needs no Wi-Fi driver.
 
-# Known Inconsistencies
+# Releasing
 
-- `bin/monarch-iso-release` has a `BULD_VERSION` typo, forces `MONARCH_INSTALLER_REF=master` (no such branch — `monarch-os/monarch` has only `dev`), and its `--no-make` handling conflicts with reading the version from `$1`.
+```bash
+./bin/monarch-iso-release <version>              # build, sign, upload
+./bin/monarch-iso-release --no-make <version>    # reuse the newest built ISO
+MONARCH_INSTALLER_REF=some-branch ./bin/monarch-iso-release <version>
+```
+
+`monarch-iso-release` picks the newest `release/*x86_64-<ref>.iso`, copies it to `release/monarch-<version>.iso`, signs it and uploads it to R2. It invokes its siblings through `$BUILD_ROOT/bin/` rather than `$PATH`, so it works from any working directory.
+
+**TODO — when `main` exists on `monarch-os/monarch`:** flip `INSTALLER_REF` in `bin/monarch-iso-release` from `dev` to `main`, and leave `bin/monarch-iso-make` on `dev`. That gives the intended split — `make` builds development, `release` builds stable — without a new flag, since the two scripts already carry the distinction. Do **not** add a `--release` flag to `monarch-iso-make`: it would duplicate `MONARCH_INSTALLER_REF`, collide in name with `monarch-iso-release`, and reintroduce by the back door the release-channel model that was deliberately dropped in `118a5cc`. Reviving channels is an architecture decision, not a flag.
