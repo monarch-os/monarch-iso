@@ -31,6 +31,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+MONARCH_INSTALLER_REPO="${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}"
+MONARCH_INSTALLER_REF="${MONARCH_INSTALLER_REF:-dev}"
+
+# Reject a bad ref here rather than inside the container. The clone happens
+# several minutes in — after the host pacman cache has been wiped and the build
+# packages installed — and its failure is buried in the build log.
+if [[ -z "${LOCAL_SOURCE-}" ]]; then
+  if ! git ls-remote --exit-code --heads --tags \
+    "$MONARCH_INSTALLER_REPO" "$MONARCH_INSTALLER_REF" >/dev/null 2>&1; then
+    echo "Branch or tag '$MONARCH_INSTALLER_REF' not found on $MONARCH_INSTALLER_REPO" >&2
+    echo "Available branches:" >&2
+    git ls-remote --heads "$MONARCH_INSTALLER_REPO" 2>/dev/null |
+      sed 's|.*refs/heads/|  |' >&2
+    exit 1
+  fi
+fi
+
 # Clear out old packages
 sudo rm -rf /var/cache/pacman/pkg/*
 
@@ -44,9 +61,6 @@ BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
 BUILDER_CMD="${BUILDER_CMD:-docker}"
-
-MONARCH_INSTALLER_REPO="${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}"
-MONARCH_INSTALLER_REF="${MONARCH_INSTALLER_REF:-main}"
 
 DOCKER_ARGS=(
   --rm
@@ -81,6 +95,10 @@ if [[ -z "$NO_CACHE" ]]; then
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/monarch since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/monarch")
+else
+  # The locally cached :latest image is a cache too — docker run never
+  # re-checks the registry for it, so refresh it when building cold.
+  DOCKER_ARGS+=(--pull=always)
 fi
 
 # Run the builder with assembled args

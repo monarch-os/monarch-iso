@@ -80,5 +80,6 @@ qemu-system-x86_64 \
   -device virtio-vga-gl \
   -display gtk,gl=on \
   -usb -device usb-tablet \
+  -serial none \
   "${NET_ARGS[@]}" \
   -boot menu=on
