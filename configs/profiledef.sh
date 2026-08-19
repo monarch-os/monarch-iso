@@ -14,12 +14,23 @@ pacman_conf="pacman-offline.conf"
 airootfs_image_type="squashfs"
 
 # mksquashfs otherwise takes every core and sizes its caches at 25% of physical
-# RAM — ~7.6GB on a 30GB desktop — which makes the machine unusable for the
-# length of a build. Leave a quarter of the cores to everything else and hold
-# the caches to a fixed 2GB. Every knob here is overridable, since CI has
-# nothing else to do with the box; monarch-iso-make forwards them all into the
-# builder, which cannot otherwise see the host environment.
-squashfs_processors="${MONARCH_ISO_SQUASHFS_PROCESSORS:-$((($(nproc) * 3 + 3) / 4))}"
+# RAM — ~7.6GB on a 30GB machine — which makes it unusable for the length of a
+# build. Hold the caches to a fixed 2GB and keep two cores for everything else.
+#
+# Count physical cores, not nproc: nproc reports SMT threads, so on an
+# 8-core/16-thread laptop a "leave a quarter free" rule still asks for 12
+# compression threads and oversubscribes every physical core. Note this bounds
+# the compressor pool only — mksquashfs layers its reader, fragment and writer
+# threads on top, so use monarch-iso-make's MONARCH_ISO_BUILD_CPUS when a hard
+# ceiling on the whole build is what you want.
+#
+# Every knob here is overridable, since CI has nothing else to do with the box;
+# monarch-iso-make forwards them all into the builder, which cannot otherwise
+# see the host environment.
+squashfs_cores=$(lscpu -p=CORE 2>/dev/null | grep -v '^#' | sort -u | wc -l)
+[[ $squashfs_cores =~ ^[0-9]+$ ]] && ((squashfs_cores > 0)) || squashfs_cores=$(($(nproc) / 2))
+((squashfs_cores > 2)) || squashfs_cores=3
+squashfs_processors="${MONARCH_ISO_SQUASHFS_PROCESSORS:-$((squashfs_cores - 2))}"
 squashfs_mem="${MONARCH_ISO_SQUASHFS_MEM:-2G}"
 
 # Upstream compresses at zstd 19, the highest standard level. Measured over a

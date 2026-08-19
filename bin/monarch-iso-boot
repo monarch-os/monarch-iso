@@ -2,9 +2,32 @@
 
 set -e
 
+BOOT_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+
+# nproc counts SMT threads, so on an 8-core/16-thread laptop it hands the guest
+# every logical CPU and leaves the host nothing to schedule on. Count physical
+# cores and keep two for the desktop, so a busy guest cannot wedge the session.
+usable_cores() {
+  local cores
+  cores=$(lscpu -p=CORE 2>/dev/null | grep -v '^#' | sort -u | wc -l)
+  [[ $cores =~ ^[0-9]+$ ]] && ((cores > 0)) || cores=$(($(nproc) / 2))
+  ((cores > 0)) || cores=1
+  ((cores > 2)) && echo $((cores - 2)) || echo 1
+}
+
 ISO="$1"
 REUSE=""
 OFFLINE=""
+VM_CPUS="${MONARCH_VM_CPUS:-$(usable_cores)}"
+VM_MEMORY="${MONARCH_VM_MEMORY:-4096}"
+
+# The disk lived in /tmp, which is a tmpfs on Arch — a 30G virtual disk was
+# therefore backed by RAM, cost gigabytes of it as it filled, and could never
+# grow past the tmpfs size regardless of what qemu-img was asked for. vm-saves/
+# is gitignored and on real storage.
+DISK="${MONARCH_VM_DISK:-$BOOT_ROOT/vm-saves/monarch-iso-boot.qcow2}"
+DISK_SIZE="${MONARCH_VM_DISK_SIZE:-30G}"
+OVMF_VARS="${DISK%.qcow2}-OVMF_VARS.4m.fd"
 
 for arg in "${@:2}"; do
   case "$arg" in
@@ -25,7 +48,7 @@ fi
 
 if [ -z "$ISO" ]; then
   echo "Usage: monarch-iso-boot [release/monarch.iso] [reuse] [offline]"
-  echo "  reuse    Reuse existing disk image at /tmp/monarch-iso-boot.qcow2"
+  echo "  reuse    Reuse existing disk image at $DISK"
   echo "  offline  Boot without any network interface (test offline install)"
   echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh, online mode only)"
   exit 1
@@ -60,19 +83,19 @@ if [[ -z ${WAYLAND_DISPLAY:-} && -z ${DISPLAY:-} ]]; then
   exit 1
 fi
 
-DISK="/tmp/monarch-iso-boot.qcow2"
+mkdir -p "${DISK%/*}"
 if [[ ! -f $DISK || $REUSE != "reuse" ]]; then
-  qemu-img create -f qcow2 "$DISK" 30G
-  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd /tmp/OVMF_VARS.4m.fd
+  qemu-img create -f qcow2 "$DISK" "$DISK_SIZE"
+  cp /usr/share/edk2/x64/OVMF_VARS.4m.fd "$OVMF_VARS"
 fi
 
 # Boot from ISO before we've installed, then boot from drive after
 qemu-system-x86_64 \
   -cpu host -enable-kvm -machine q35,accel=kvm \
-  -smp "$(nproc)" \
-  -m 4096 \
+  -smp "$VM_CPUS" \
+  -m "$VM_MEMORY" \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/edk2/x64/OVMF_CODE.4m.fd \
-  -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.4m.fd \
+  -drive if=pflash,format=raw,file="$OVMF_VARS" \
   -drive file="$DISK",format=qcow2,if=none,id=drive0 \
   -device virtio-blk-pci,drive=drive0,bootindex=1 \
   -drive file="$ISO",media=cdrom,if=none,format=raw,id=cdrom0 \
