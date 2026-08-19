@@ -116,11 +116,16 @@ if [ -d "/var/cache/pacman/pkg" ]; then
   DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
 fi
 
-# Mount the build cache directory where packages are downloaded
+# Mount the build cache directory where packages are downloaded. Keyed by the
+# installer ref, not by date: different refs can carry different package lists,
+# different days within a ref cannot. The old per-day key forced a fresh ~5GB
+# download on the first build of every day and left every previous day's cache
+# on disk forever, since nothing ever pruned them. --no-cache still bypasses
+# the mount entirely. Mirrors omarchy-iso 874e6cd.
 if [[ -z "$NO_CACHE" ]]; then
-  # using a dated dir on the host to refresh daily if building multiple times
-  BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/monarch/iso_${BUILD_DATE}/airootfs/var/cache/monarch"
+  # Refs may contain slashes (fix/some-branch), which would nest directories.
+  CACHE_KEY="${MONARCH_INSTALLER_REF//\//-}"
+  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/monarch/iso_${CACHE_KEY}/airootfs/var/cache/monarch"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/monarch since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/monarch")

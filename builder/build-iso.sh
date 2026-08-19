@@ -97,12 +97,27 @@ all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
-pacman --config /configs/pacman-online.conf --noconfirm -Syw "${all_packages[@]}" --cachedir $offline_mirror_dir/ --dbpath /tmp/offlinedb
+download_offline_packages() {
+  pacman --config /configs/pacman-online.conf --noconfirm -Syw \
+    "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
+}
+
+# A repository may occasionally republish a package without changing its
+# filename. Pacman detects that the persistent cached copy no longer matches
+# the refreshed repository checksum and deletes it, but still fails the
+# transaction. Retry once so the now-missing package is downloaded. This matters
+# more now that the cache is keyed by ref and therefore lives for months.
+# Mirrors omarchy-iso 3544261.
+if ! download_offline_packages; then
+  echo "Offline package download failed; retrying after pacman cleaned invalid cached files..." >&2
+  download_offline_packages
+fi
 
 # Resolve the exact filenames chosen by the databases just synced above, and
-# throw away everything else the cache holds. The build cache is per-day but
-# shared by every build that day, so it accumulates superseded versions and
-# packages that have since left the lists or the dependency closure. Note the
+# throw away everything else the cache holds. The build cache is keyed by ref
+# and shared by every build on it, so it accumulates superseded versions and
+# packages that have since left the lists or the dependency closure — all the
+# more so now that it is no longer discarded daily. Note the
 # plain -S: re-syncing here could resolve a different version than the one the
 # -Syw above actually downloaded.
 if ! resolved_package_files="$(
