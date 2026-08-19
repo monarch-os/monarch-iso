@@ -64,9 +64,13 @@ if [[ -n ${MONARCH_VM_CIDATA:-} ]]; then
     echo "MONARCH_VM_CIDATA points at $MONARCH_VM_CIDATA, which does not exist" >&2
     exit 1
   fi
+  # bus=ide.1 because q35's AHCI controller takes one device per port, so the
+  # installer ISO already fills the ide.0 the device would otherwise default to.
+  # No bootindex: the drive carries no boot catalog and must stay out of the
+  # boot order.
   CIDATA_ARGS=(
     -drive "file=$MONARCH_VM_CIDATA,media=cdrom,if=none,format=raw,id=cdrom1"
-    -device ide-cd,drive=cdrom1
+    -device ide-cd,drive=cdrom1,bus=ide.1
   )
 fi
 
