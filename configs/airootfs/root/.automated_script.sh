@@ -189,16 +189,24 @@ EOF
 
   # Copy the local monarch repo to the user's home directory
   mkdir -p /mnt/home/$MONARCH_USER/.local/share/
-  cp -r /root/monarch /mnt/home/$MONARCH_USER/.local/share/
+  # -a, not -r: without it the copy drops the executable bit, which is why the
+  # chmods below exist at all.
+  cp -a /root/monarch /mnt/home/$MONARCH_USER/.local/share/
 
   chown -R 1000:1000 /mnt/home/$MONARCH_USER/.local/
 
-  # Ensure all necessary scripts are executable
-  find /mnt/home/$MONARCH_USER/.local/share/monarch -type f -path "*/bin/*" -exec chmod +x {} \;
+  # Belt and braces, in case the repo reached the ISO through something that
+  # already lost the bit. Named directories rather than named files: the v5 port
+  # moved the bar indicator scripts from default/waybar/indicators/ to
+  # default/noctalia/indicators/, and the three chmods that used to name the
+  # waybar paths kept failing silently against `2>/dev/null || true`. Every
+  # streamed indicator was left non-executable on every installed machine, and an
+  # indicator whose stream never starts is invisible rather than broken, so
+  # nothing surfaced it.
+  find /mnt/home/$MONARCH_USER/.local/share/monarch \
+    -type f \( -path "*/bin/*" -o -path "*/default/noctalia/indicators/*" \) \
+    -exec chmod +x {} \;
   chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/boot.sh 2>/dev/null || true
-  chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/screen-recording.sh 2>/dev/null || true
-  chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/idle.sh 2>/dev/null || true
-  chmod +x /mnt/home/$MONARCH_USER/.local/share/monarch/default/waybar/indicators/notification-silencing.sh 2>/dev/null || true
 }
 
 chroot_bash() {
