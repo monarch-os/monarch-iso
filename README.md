@@ -96,7 +96,17 @@ cp user_configuration.json user_credentials.json authorized_keys cidata/
 xorrisofs -output cidata.iso -volid cidata -joliet -rock cidata/
 ```
 
-`xorrisofs` comes from `libisoburn`; `genisoimage` takes the same flags.
+`xorrisofs` comes from `libisoburn`; `genisoimage` takes the same flags. The
+installer looks the drive up by label, not by filesystem, so a FAT image works
+just as well and needs no ISO tooling — note `mkfs.vfat` uppercases the label:
+
+```bash
+truncate -s 4M cidata.img && mkfs.vfat -n CIDATA cidata.img
+mcopy -i cidata.img cidata/* ::/
+```
+
+An ISO is the better choice for Proxmox, libvirt and Packer, which expect to
+attach a `cidata` drive as a CD-ROM.
 
 ### Booting it in the test VM
 

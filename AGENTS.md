@@ -172,6 +172,15 @@ QEMU's default serial port makes the guest kernel register `ttyS0` as a console.
 
 `bin/monarch-iso-boot` passes `-serial none` so test VMs behave like real hardware here. If you drive QEMU by hand, pass it too, or you will chase a boot-splash bug that does not exist. `console=tty0` on the kernel cmdline is the equivalent workaround from inside a running guest — do **not** bake it into `default/limine/default.conf`, it would break installs that genuinely use a serial console.
 
+`bin/monarch-iso-boot` attaches the autoinstall drive over USB, not as a second
+`ide-cd`. On `q35` the AHCI controller takes one device per port, so an `ide-cd`
+lands on the `ide.0` the installer ISO already fills and QEMU aborts the launch
+outright with `Can't create IDE unit 1, bus supports only 1 units`. Naming a free
+port (`bus=ide.1`) works too but ties the drive to q35's port layout; omarchy-iso
+attaches its own cidata over USB for the same reason. This makes the `-usb` in
+the invocation load-bearing for a feature that reads nowhere near it — without a
+USB controller the device has no bus to sit on.
+
 More generally: when a symptom appears in a test VM, confirm it on real hardware before changing anything in `monarch/`.
 
 # The Live Kernel
