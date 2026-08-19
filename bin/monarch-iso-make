@@ -5,10 +5,15 @@ set -e
 
 # Parse command line arguments
 NO_CACHE=""
+KEEP_PKG_CACHE=""
 while [[ $# -gt 0 ]]; do
   case $1 in
   --no-cache)
     NO_CACHE=1
+    shift
+    ;;
+  --keep-pkg-cache)
+    KEEP_PKG_CACHE=1
     shift
     ;;
   --no-boot-offer)
@@ -25,7 +30,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--no-boot-offer] [--local-source] [--dev]"
+    echo "Usage: $0 [--no-cache] [--keep-pkg-cache] [--no-boot-offer] [--local-source] [--dev]"
     exit 1
     ;;
   esac
@@ -48,8 +53,13 @@ if [[ -z "${LOCAL_SOURCE-}" ]]; then
   fi
 fi
 
-# Clear out old packages
-sudo rm -rf /var/cache/pacman/pkg/*
+# Clear out old packages. This is the host's own pacman cache, not just the
+# build's, and purging it needs interactive sudo — --keep-pkg-cache skips it so
+# unattended builds can run without a prompt and repeat builds keep their
+# already-downloaded packages. Mirrors omarchy-iso 0c13338.
+if [[ -z "$KEEP_PKG_CACHE" ]]; then
+  sudo rm -rf /var/cache/pacman/pkg/*
+fi
 
 # Ensure we have the submodule checked out
 git submodule update --init --recursive --jobs=8
@@ -76,6 +86,25 @@ DOCKER_ARGS=(
   -v "$BUILD_ROOT/configs:/configs:ro"
 )
 
+# The container is otherwise free to take every core and all of RAM, and an ISO
+# build is long enough that this makes the machine unusable to sit through.
+# configs/profiledef.sh already bounds mksquashfs itself, which is the bulk of
+# the cost; these cap the whole build — pacstrap and pip included — for anyone
+# who wants to keep working during it. Unset by default so CI is unconstrained.
+if [[ -n "${MONARCH_ISO_BUILD_CPUS-}" ]]; then
+  DOCKER_ARGS+=(--cpus "$MONARCH_ISO_BUILD_CPUS")
+fi
+if [[ -n "${MONARCH_ISO_BUILD_MEMORY-}" ]]; then
+  DOCKER_ARGS+=(--memory "$MONARCH_ISO_BUILD_MEMORY")
+fi
+
+# Forward the mksquashfs bounds read by configs/profiledef.sh, which runs inside
+# the container and cannot see the host environment otherwise.
+for var in MONARCH_ISO_SQUASHFS_PROCESSORS MONARCH_ISO_SQUASHFS_MEM MONARCH_ISO_SQUASHFS_LEVEL; do
+  if [[ -n "${!var-}" ]]; then
+    DOCKER_ARGS+=(-e "$var=${!var}")
+  fi
+done
 
 # Use local source of Monarch from $MONARCH_PATH instead of git checkout
 if [[ -n "${LOCAL_SOURCE-}" ]]; then
@@ -87,11 +116,16 @@ if [ -d "/var/cache/pacman/pkg" ]; then
   DOCKER_ARGS+=(-v "/var/cache/pacman/pkg:/var/cache/pacman/pkg")
 fi
 
-# Mount the build cache directory where packages are downloaded
+# Mount the build cache directory where packages are downloaded. Keyed by the
+# installer ref, not by date: different refs can carry different package lists,
+# different days within a ref cannot. The old per-day key forced a fresh ~5GB
+# download on the first build of every day and left every previous day's cache
+# on disk forever, since nothing ever pruned them. --no-cache still bypasses
+# the mount entirely. Mirrors omarchy-iso 874e6cd.
 if [[ -z "$NO_CACHE" ]]; then
-  # using a dated dir on the host to refresh daily if building multiple times
-  BUILD_DATE=$(date +%Y-%m-%d)
-  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/monarch/iso_${BUILD_DATE}/airootfs/var/cache/monarch"
+  # Refs may contain slashes (fix/some-branch), which would nest directories.
+  CACHE_KEY="${MONARCH_INSTALLER_REF//\//-}"
+  OFFLINE_REPO_BUILD_CACHE_DIR="$HOME/.cache/monarch/iso_${CACHE_KEY}/airootfs/var/cache/monarch"
   mkdir -p "$OFFLINE_REPO_BUILD_CACHE_DIR"
   # Mount to /var/cache/airootfs/var/cache/monarch since that's where repo packages go in the ISO
   DOCKER_ARGS+=(-v "$OFFLINE_REPO_BUILD_CACHE_DIR:/var/cache/airootfs/var/cache/monarch")
