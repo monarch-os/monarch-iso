@@ -16,10 +16,26 @@ airootfs_image_type="squashfs"
 # mksquashfs otherwise takes every core and sizes its caches at 25% of physical
 # RAM — ~7.6GB on a 30GB desktop — which makes the machine unusable for the
 # length of a build. Leave a quarter of the cores to everything else and hold
-# the caches to a fixed 2GB. Both are overridable, since CI has nothing else to
-# do with the box; monarch-iso-make forwards the two variables into the builder.
+# the caches to a fixed 2GB. Every knob here is overridable, since CI has
+# nothing else to do with the box; monarch-iso-make forwards them all into the
+# builder, which cannot otherwise see the host environment.
 squashfs_processors="${MONARCH_ISO_SQUASHFS_PROCESSORS:-$((($(nproc) * 3 + 3) / 4))}"
 squashfs_mem="${MONARCH_ISO_SQUASHFS_MEM:-2G}"
+
+# Upstream compresses at zstd 19, the highest standard level. Measured over a
+# 1.7GB live-root-shaped tree (31k files of Python and ELF) at -processors 12:
+#
+#   level 19   193s wall   1723s CPU   408.6MiB
+#   level 15    51s wall    450s CPU   444.9MiB
+#   level 12    24s wall    184s CPU   446.8MiB
+#
+# 19 buys its last 38MiB for 9.4x the CPU, and 15 is dominated outright by 12 —
+# 2.4x the CPU for 1.9MiB. So default to 12 and let anyone who wants the
+# smallest possible image ask for it; CI, with nothing else to do with the box,
+# is the obvious caller. zstd decompresses at essentially the same speed at any
+# level, so a lower level costs nothing at install or live-boot time, which is
+# what the move to zstd was for in the first place.
+squashfs_level="${MONARCH_ISO_SQUASHFS_LEVEL:-12}"
 
 # Package archives in the offline mirror are already zstd-compressed. Storing
 # them in an outer stream saves little space but makes pacman decompress the
@@ -30,14 +46,15 @@ squashfs_mem="${MONARCH_ISO_SQUASHFS_MEM:-2G}"
 # Everything else in the live root is zstd rather than xz. Squashfs decompresses
 # on the page-fault path through a single stream (CONFIG_SQUASHFS_DECOMP_SINGLE),
 # where xz manages ~100MB/s against zstd's ~900MB/s, and the live root is read
-# cold on every boot: kernel, plymouth, systemd, python, archinstall, gum. The
-# whole ISO grows well under a percent for it, and dropping the x86 BCJ filter
-# also removes one of the blockers for aarch64 support.
+# cold on every boot: kernel, plymouth, systemd, python, archinstall, gum.
+# Storing the mirror raw and moving the rest to zstd measured +0.59% of ISO size
+# (7.24GB to 7.28GB); the level chosen above should add ~45MiB more. Dropping the
+# x86 BCJ filter also removes one of the blockers for aarch64 support.
 #
 # Ported from omarchy-iso 463f862 and a8c3a67.
 airootfs_image_tool_options=(
   '-comp' 'zstd'
-  '-Xcompression-level' '19'
+  '-Xcompression-level' "$squashfs_level"
   '-b' '1M'
   '-action' 'uncompressed@subpathname(var/cache/monarch/mirror/offline)'
   '-processors' "$squashfs_processors"

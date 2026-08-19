@@ -100,7 +100,7 @@ fi
 
 # Forward the mksquashfs bounds read by configs/profiledef.sh, which runs inside
 # the container and cannot see the host environment otherwise.
-for var in MONARCH_ISO_SQUASHFS_PROCESSORS MONARCH_ISO_SQUASHFS_MEM; do
+for var in MONARCH_ISO_SQUASHFS_PROCESSORS MONARCH_ISO_SQUASHFS_MEM MONARCH_ISO_SQUASHFS_LEVEL; do
   if [[ -n "${!var-}" ]]; then
     DOCKER_ARGS+=(-e "$var=${!var}")
   fi
