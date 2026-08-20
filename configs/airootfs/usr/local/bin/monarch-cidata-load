@@ -1,11 +1,9 @@
 #!/bin/bash
 #
-# Copy the configurator's output files off a cidata drive into /root, so the
-# wizard can be skipped. Exit 0 when that happened; anything else means this is
-# not an autoinstall drive and the caller falls back to the wizard.
+# Copy the configurator's output files off a cidata drive into /root. Exit 0
+# when that happened, so the caller can skip the wizard. See AGENTS.md.
 #
-# The optional argument prefixes every path touched, so tests can run against a
-# sandbox. See AGENTS.md "Autoinstall".
+# The optional argument prefixes every path touched, for the tests.
 
 set -uo pipefail
 
@@ -14,8 +12,7 @@ by_label=$root/dev/disk/by-label
 dest=$root/root
 mnt=$root/run/cidata
 
-# On a fast boot this can run before udev has finished enumerating, which would
-# silently drop a headless install into the wizard.
+# A fast boot can beat udev here, dropping a headless install into the wizard.
 udevadm settle 2>/dev/null || true
 
 # mkfs.vfat uppercases the label, genisoimage does not.
@@ -31,9 +28,8 @@ mount -o ro "$device" "$mnt" || exit 1
 required_inputs=(user_configuration.json user_credentials.json)
 optional_inputs=(user_full_name.txt user_email_address.txt authorized_keys)
 
-# A previous load in the same live session may have left inputs behind: a stale
-# authorized_keys would authorize keys the current drive never carried. Nothing
-# of the user's is lost, since a cidata load always precedes the wizard.
+# A previous load in this live session may have left a stale authorized_keys,
+# which would authorize keys this drive never carried.
 for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
   rm -f "$dest/$file"
 done
@@ -48,8 +44,7 @@ if [[ -f $mnt/user_configuration.json && -f $mnt/user_credentials.json ]]; then
   if cp "${files[@]}" "$dest"/; then
     loaded=0
   else
-    # The wizard cleans up only what it writes, so a half-copied drive would
-    # leak into the interactive install that follows.
+    # Else a half-copied drive leaks into the wizard, which cleans up only its own.
     for file in "${files[@]}"; do
       rm -f "$dest/${file##*/}"
     done

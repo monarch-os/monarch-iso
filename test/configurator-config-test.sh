@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# Checks that the configurator writes valid archinstall inputs, encrypted and
-# unencrypted. The wizard itself needs a TTY, so this runs only the tail that
-# generates the files: the awk below lifts it out of the configurator verbatim
-# and evaluates it against fake answers. A malformed heredoc is otherwise
-# invisible until an install has already wiped a disk.
+# Checks the configurator's archinstall inputs, encrypted and unencrypted. The
+# wizard needs a TTY, so the awk below lifts out just the file-generating tail
+# and runs it against fake answers. A malformed heredoc is otherwise invisible
+# until an install has already wiped a disk.
 #
 # Run: bash test/configurator-config-test.sh
 

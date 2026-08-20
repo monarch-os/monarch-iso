@@ -55,7 +55,6 @@ if [ -z "$ISO" ]; then
   exit 1
 fi
 
-# A cidata drive makes the ISO install itself without a keyboard.
 CIDATA_ARGS=()
 if [[ -n ${MONARCH_VM_CIDATA:-} ]]; then
   if [[ ! -f $MONARCH_VM_CIDATA ]]; then
@@ -63,8 +62,7 @@ if [[ -n ${MONARCH_VM_CIDATA:-} ]]; then
     exit 1
   fi
   # USB, not a second ide-cd: q35's AHCI takes one device per port and the
-  # installer ISO already fills ide.0. Needs the -usb further down to have a bus
-  # at all. No bootindex — the drive carries no boot catalog.
+  # installer ISO fills ide.0. Depends on the -usb further down for its bus.
   CIDATA_ARGS=(
     -drive "file=$MONARCH_VM_CIDATA,media=cdrom,if=none,format=raw,id=cidata"
     -device usb-storage,drive=cidata

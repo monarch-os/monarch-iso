@@ -383,8 +383,7 @@ disk_form() {
 
 disk_form
 
-# Encryption is the default; Ctrl+C on the confirmation toggles it off instead
-# of aborting, so the wizard stays at three steps (as in omarchy-iso quattro).
+# Encryption is the default; Ctrl+C toggles it off instead of aborting.
 encrypt_installation=true
 
 while true; do
@@ -460,8 +459,7 @@ password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
 username_escaped=$(echo -n "$username" | jq -Rsa)
 
-# archinstall reads the LUKS passphrase from here; leave it out entirely when
-# there is nothing to unlock.
+# Left out entirely when there is nothing to unlock.
 credentials_encryption_line=""
 if [[ $encrypt_installation == true ]]; then
   credentials_encryption_line="    \"encryption_password\": $password_escaped,"$'\n'
@@ -501,9 +499,8 @@ main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_rese
 # Use CachyOS kernel (has T2 support built-in)
 kernel_choice="linux-cachyos"
 
-# Keyed to the root partition by obj_id, so it belongs next to the partition
-# table it refers to; absent, archinstall installs to a plain btrfs root. Opens
-# with a comma because the substitution below drops the trailing newline.
+# Keyed to the root partition by obj_id; absent, archinstall installs to a plain
+# btrfs root. Opens with a comma: the substitution drops the trailing newline.
 disk_encryption_json=""
 if [[ $encrypt_installation == true ]]; then
   disk_encryption_json=$(

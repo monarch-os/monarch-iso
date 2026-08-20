@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# Tests configs/airootfs/usr/local/bin/monarch-cidata-load against a throwaway
-# sandbox. The script takes a path prefix, so every case runs with mount, umount
-# and udevadm stubbed out: "mounting" copies the fake drive's contents into the
-# mountpoint, and every stub logs its invocation so the cases can assert what was
-# (not) called.
+# Tests monarch-cidata-load against a throwaway sandbox, with mount, umount and
+# udevadm stubbed: "mounting" copies the fake drive into the mountpoint, and each
+# stub logs its invocation so a case can assert what was (not) called.
 #
 # Run: bash test/cidata-load-test.sh
 
