@@ -9,12 +9,18 @@ VM_DIR="$(dirname "$SCRIPT_DIR")/vm-saves"
 # argument snapshots whatever was last booted rather than a guess.
 WORK_DISK="${MONARCH_VM_DISK:-$VM_DIR/monarch-iso-boot.qcow2}"
 
+# monarch-iso-boot derives the EFI variables from the disk name, so anything
+# handed to it through MONARCH_VM_DISK must keep them under this name.
 ovmf_of() {
   echo "${1%.qcow2}-OVMF_VARS.4m.fd"
 }
 
+# A snapshot is a directory holding the disk and its variables. Disks saved flat
+# beside it still resolve: they are what monarch-iso-boot writes when
+# MONARCH_VM_DISK names one, and there is no reason to lose track of them.
 disk_of() {
-  echo "$VM_DIR/$1.qcow2"
+  local dir="$VM_DIR/$1/disk.qcow2"
+  [[ -f "$dir" ]] && echo "$dir" || echo "$VM_DIR/$1.qcow2"
 }
 
 mkdir -p "$VM_DIR"
@@ -33,14 +39,23 @@ save_vm() {
     exit 1
   fi
 
-  local disk
-  disk=$(disk_of "$name")
+  local vm_path="$VM_DIR/$name"
+  local disk="$vm_path/disk.qcow2"
 
-  if [[ -e "$disk" ]]; then
-    if ! gum confirm "Snapshot '$name' exists. Overwrite?"; then
-      exit 0
-    fi
+  if [[ -f "$VM_DIR/$name.qcow2" ]]; then
+    echo "Error: '$name' already names a disk saved flat, from before snapshots"
+    echo "had a directory of their own. Move it in, or save under another name:"
+    echo "  mkdir -p $vm_path"
+    echo "  mv $VM_DIR/$name.qcow2 $disk"
+    echo "  mv $(ovmf_of "$VM_DIR/$name") $(ovmf_of "$disk")"
+    exit 1
   fi
+
+  if [[ -f "$disk" ]] && ! gum confirm "Snapshot '$name' exists. Overwrite?"; then
+    exit 0
+  fi
+
+  mkdir -p "$vm_path"
 
   echo "Saving snapshot '$name'..."
   # --reflink=auto: vm-saves sits on btrfs here, where a 30G image copies
@@ -50,17 +65,26 @@ save_vm() {
     cp "$(ovmf_of "$WORK_DISK")" "$(ovmf_of "$disk")"
   fi
 
-  gum style --foreground 212 "✓ Saved to $disk"
+  gum style --foreground 212 "✓ Saved to $vm_path"
 }
 
 snapshot_names() {
-  local disk work
+  local path work
   work=$(realpath -m "$WORK_DISK")
-  for disk in "$VM_DIR"/*.qcow2; do
-    [[ -f "$disk" ]] || continue
-    [[ $(realpath -m "$disk") == "$work" ]] && continue
-    basename "$disk" .qcow2
-  done
+
+  {
+    for path in "$VM_DIR"/*/disk.qcow2; do
+      [[ -f "$path" ]] || continue
+      path=${path%/disk.qcow2}
+      basename "$path"
+    done
+
+    for path in "$VM_DIR"/*.qcow2; do
+      [[ -f "$path" ]] || continue
+      [[ $(realpath -m "$path") == "$work" ]] && continue
+      basename "$path" .qcow2
+    done
+  } | sort -u
 }
 
 list_vms() {
@@ -73,9 +97,11 @@ list_vms() {
   fi
 
   echo "Available VM snapshots:"
-  local name
+  local name disk
   while read -r name; do
-    echo "  • $name ($(du -h "$(disk_of "$name")" | cut -f1) on disk)"
+    disk=$(disk_of "$name")
+    printf '  • %s (%s, %s)\n' \
+      "$name" "$(du -h "$disk" | cut -f1)" "$(date -r "$disk" '+%Y-%m-%d %H:%M')"
   done <<<"$names"
 }
 
@@ -130,7 +156,7 @@ case "${1:-}" in
       "$(gum style --bold 'monarch-vm') - VM snapshot manager" \
       "" \
       "$(gum style --foreground 245 'Commands:')" \
-      "  save [name]  Copy the current disk to vm-saves/<name>.qcow2" \
+      "  save [name]  Copy the current disk to vm-saves/<name>/" \
       "  boot [name]  Boot a saved disk (interactive if no name)" \
       "  list         List available VMs" \
       "" \

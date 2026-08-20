@@ -39,16 +39,21 @@ already running.
 
 ### Keeping a VM around
 
-Installed disks live in `vm-saves/`, next to the EFI variables that go with them.
 `monarch-iso-boot` uses `vm-saves/monarch-iso-boot.qcow2` unless
 `MONARCH_VM_DISK` names another, and formats it on every run — `reuse` is what
-keeps an installed system.
+keeps an installed system. `monarch-vm` names those disks so they survive the
+next build:
 
 ```bash
 ./bin/monarch-vm save noctalia-v5   # copy the current disk under a name
-./bin/monarch-vm list               # what is saved, and how much space it takes
+./bin/monarch-vm list               # what is saved, how big, how old
 ./bin/monarch-vm boot noctalia-v5   # boot it again, no ISO involved
 ```
+
+A saved VM is a directory: `vm-saves/noctalia-v5/disk.qcow2` and its EFI
+variables beside it. One thing to copy, move or delete. Disks kept flat in
+`vm-saves/` — what `MONARCH_VM_DISK=vm-saves/foo.qcow2` writes — still list and
+boot under their own name.
 
 `boot` starts the named disk in place, so anything the guest writes stays in the
 snapshot. Take a copy first (`save` again under another name) when you want a

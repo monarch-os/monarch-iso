@@ -132,11 +132,19 @@ Autoinstall images meant to come up unattended want encryption off.
 
 Disks live in `vm-saves/` (gitignored, real storage — `/tmp` is a tmpfs and a
 30G image would be RAM). `monarch-iso-boot` writes `vm-saves/monarch-iso-boot.qcow2`
-unless `MONARCH_VM_DISK` says otherwise, with its EFI variables alongside as
-`<disk>-OVMF_VARS.4m.fd`. `monarch-vm` reads and writes that same layout: `save`
-copies the current disk to `vm-saves/<name>.qcow2`, `boot <name>` starts it in
-place. Both honour `MONARCH_VM_DISK`, and `test/vm-snapshot-test.sh` asserts they
-agree — they did not for a while, and `boot` silently started the wrong VM.
+unless `MONARCH_VM_DISK` says otherwise, and derives the EFI variables from the
+disk name as `<disk>-OVMF_VARS.4m.fd` — anything handed to it must keep them
+under that name.
+
+`monarch-vm save <name>` puts a copy in `vm-saves/<name>/` as `disk.qcow2` plus
+`disk-OVMF_VARS.4m.fd`, so a VM is one directory to keep, move or delete.
+`boot <name>` starts it in place through `MONARCH_VM_DISK`. Disks saved flat
+next to it — what `MONARCH_VM_DISK=vm-saves/foo.qcow2` produces — still resolve
+by name; `save` refuses a name one already answers to rather than shadowing it.
+
+`test/vm-snapshot-test.sh` asserts the handoff: the disk `monarch-vm` names is
+the disk that gets booted. It did not hold for a while, and `boot` silently
+started the wrong VM.
 
 Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`). `--local-source` bind-mounts `$MONARCH_PATH` instead of cloning.
 

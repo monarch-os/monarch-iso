@@ -61,13 +61,23 @@ chmod +x "$TMP/stub/monarch-iso-boot" "$TMP/stub/gum"
 export PATH="$TMP/stub:$PATH"
 export BOOT_LOG="$TMP/boot.log"
 
-make_disk() {
+# A snapshot: its own directory, the disk inside it, the EFI variables under the
+# name monarch-iso-boot derives from the disk.
+make_snapshot() {
+  mkdir -p "$SAVES/$1"
+  printf 'disk-%s' "$2" >"$SAVES/$1/disk.qcow2"
+  printf 'efi-%s' "$2" >"$SAVES/$1/disk-OVMF_VARS.4m.fd"
+}
+
+# The layout monarch-iso-boot writes directly when MONARCH_VM_DISK names a disk.
+make_flat_disk() {
   printf 'disk-%s' "$2" >"$SAVES/$1.qcow2"
   printf 'efi-%s' "$2" >"$SAVES/$1-OVMF_VARS.4m.fd"
 }
 
-make_disk monarch-iso-boot working
-make_disk installed snapshot
+make_flat_disk monarch-iso-boot working
+make_snapshot installed snapshot
+make_flat_disk sidecar legacy
 
 booted_disk() {
   sed -n 's/^disk: //p' "$BOOT_LOG"
@@ -77,7 +87,7 @@ rm -f "$BOOT_LOG"
 "$VM" boot installed >/dev/null || fail "boot returned non-zero on a snapshot that exists"
 [[ -f $BOOT_LOG ]] || fail "boot never reached monarch-iso-boot"
 check "boot hands monarch-iso-boot the snapshot it named" \
-  "$(booted_disk)" "$SAVES/installed.qcow2"
+  "$(booted_disk)" "$SAVES/installed/disk.qcow2"
 check "boot asks for the disk it already has, not a fresh one" \
   "$(sed -n 's/^args: //p' "$BOOT_LOG")" "/dev/null reuse"
 
@@ -88,46 +98,63 @@ check "boot asks for the disk it already has, not a fresh one" \
 grep -q '/tmp/' "$VM_SCRIPT" && fail "monarch-vm still stages VMs through /tmp"
 pass "no /tmp staging is left in the script"
 
-check "the snapshot is untouched by a boot" "$(cat "$SAVES/installed.qcow2")" "disk-snapshot"
+check "the snapshot is untouched by a boot" "$(cat "$SAVES/installed/disk.qcow2")" "disk-snapshot"
+
+rm -f "$BOOT_LOG"
+"$VM" boot sidecar >/dev/null || fail "boot returned non-zero on a disk saved flat"
+check "a disk saved flat still boots, under its own name" \
+  "$(booted_disk)" "$SAVES/sidecar.qcow2"
 
 rm -f "$BOOT_LOG"
 "$VM" boot absent >/dev/null 2>&1 && fail "an unknown snapshot must not boot"
 [[ ! -f $BOOT_LOG ]] || fail "an unknown snapshot reached monarch-iso-boot"
 pass "an unknown snapshot is refused before anything boots"
 
-mv "$SAVES/installed-OVMF_VARS.4m.fd" "$TMP/held"
+mv "$SAVES/installed/disk-OVMF_VARS.4m.fd" "$TMP/held"
 rm -f "$BOOT_LOG"
 "$VM" boot installed >/dev/null 2>&1 && fail "a snapshot with no EFI vars must not boot"
 [[ ! -f $BOOT_LOG ]] || fail "a snapshot with no EFI vars reached monarch-iso-boot"
 pass "a snapshot with no EFI variables is refused, not booted blind"
-mv "$TMP/held" "$SAVES/installed-OVMF_VARS.4m.fd"
+mv "$TMP/held" "$SAVES/installed/disk-OVMF_VARS.4m.fd"
 
 "$VM" save keep >/dev/null || fail "save returned non-zero"
-check "save copies the working disk under the new name" \
-  "$(cat "$SAVES/keep.qcow2")" "disk-working"
-check "save takes the EFI variables with it" \
-  "$(cat "$SAVES/keep-OVMF_VARS.4m.fd")" "efi-working"
+check "save gives the snapshot a directory of its own" \
+  "$(cat "$SAVES/keep/disk.qcow2")" "disk-working"
+check "save takes the EFI variables with it, under the derived name" \
+  "$(cat "$SAVES/keep/disk-OVMF_VARS.4m.fd")" "efi-working"
 
-MONARCH_VM_DISK="$SAVES/installed.qcow2" "$VM" save forked >/dev/null ||
+rm -f "$BOOT_LOG"
+"$VM" boot keep >/dev/null || fail "a freshly saved snapshot did not boot"
+check "what save writes is what boot hands over" \
+  "$(booted_disk)" "$SAVES/keep/disk.qcow2"
+
+MONARCH_VM_DISK="$SAVES/installed/disk.qcow2" "$VM" save forked >/dev/null ||
   fail "save returned non-zero with MONARCH_VM_DISK set"
 check "save follows MONARCH_VM_DISK, as monarch-iso-boot does" \
-  "$(cat "$SAVES/forked.qcow2")" "disk-snapshot"
+  "$(cat "$SAVES/forked/disk.qcow2")" "disk-snapshot"
 
-rm -f "$SAVES/lone-OVMF_VARS.4m.fd"
 printf 'disk-lone' >"$SAVES/lone.qcow2"
 MONARCH_VM_DISK="$SAVES/lone.qcow2" "$VM" save lonely >/dev/null ||
   fail "save must not fail when the source has no EFI variables yet"
 pass "save succeeds when the source has no EFI variables beside it"
 
+# Refused rather than resolved: both would answer to the same name afterwards,
+# and picking one silently is how `boot` started the wrong VM to begin with.
+"$VM" save sidecar >/dev/null 2>&1 && fail "save must not shadow a disk saved flat"
+check "the disk saved flat is left alone" "$(cat "$SAVES/sidecar.qcow2")" "disk-legacy"
+[[ ! -d "$SAVES/sidecar" ]] || fail "save created a directory shadowing the flat disk"
+pass "save refuses a name a flat disk already answers to"
+
 listed=$("$VM" list) || fail "list returned non-zero with snapshots present"
 grep -q 'installed' <<<"$listed" || fail "list omits a saved snapshot"
+grep -q 'sidecar' <<<"$listed" || fail "list omits a disk saved flat"
 grep -q 'monarch-iso-boot' <<<"$listed" && fail "list offers the working disk as a snapshot"
-pass "list shows the snapshots and hides the working disk"
+pass "list shows both layouts and hides the working disk"
 
-MONARCH_VM_DISK="$SAVES/installed.qcow2" "$VM" list | grep -q 'installed' &&
+MONARCH_VM_DISK="$SAVES/sidecar.qcow2" "$VM" list | grep -q 'sidecar' &&
   fail "list still offers the disk MONARCH_VM_DISK points at"
 pass "list hides whichever disk MONARCH_VM_DISK names"
 
-rm -f "$SAVES"/*.qcow2
+rm -rf "${SAVES:?}"/*
 "$VM" boot >/dev/null 2>&1 && fail "boot must fail when there is nothing saved"
 pass "boot with no snapshots fails instead of picking something"
