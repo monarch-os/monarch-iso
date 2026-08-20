@@ -81,4 +81,5 @@ file_permissions=(
   ["/root/configurator"]="0:0:755"
   ["/var/cache/monarch/mirror/offline/"]="0:0:775"
   ["/usr/local/bin/monarch-upload-log"]="0:0:755"
+  ["/usr/local/bin/monarch-cidata-load"]="0:0:755"
 )

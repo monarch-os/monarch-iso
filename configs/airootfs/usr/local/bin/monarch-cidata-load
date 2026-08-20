@@ -1,0 +1,55 @@
+#!/bin/bash
+#
+# Copy the configurator's output files off a cidata drive into /root. Exit 0
+# when that happened, so the caller can skip the wizard. See AGENTS.md.
+#
+# The optional argument prefixes every path touched, for the tests.
+
+set -uo pipefail
+
+root=${1:-}
+by_label=$root/dev/disk/by-label
+dest=$root/root
+mnt=$root/run/cidata
+
+# A fast boot can beat udev here, dropping a headless install into the wizard.
+udevadm settle 2>/dev/null || true
+
+# mkfs.vfat uppercases the label, genisoimage does not.
+device=""
+for label in cidata CIDATA; do
+  [[ -e $by_label/$label ]] && { device=$by_label/$label; break; }
+done
+[[ -n $device ]] || exit 1
+
+mkdir -p "$mnt"
+mount -o ro "$device" "$mnt" || exit 1
+
+required_inputs=(user_configuration.json user_credentials.json)
+optional_inputs=(user_full_name.txt user_email_address.txt authorized_keys)
+
+# A previous load in this live session may have left a stale authorized_keys,
+# which would authorize keys this drive never carried.
+for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
+  rm -f "$dest/$file"
+done
+
+loaded=1
+if [[ -f $mnt/user_configuration.json && -f $mnt/user_credentials.json ]]; then
+  files=()
+  for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
+    [[ -f $mnt/$file ]] && files+=("$mnt/$file")
+  done
+
+  if cp "${files[@]}" "$dest"/; then
+    loaded=0
+  else
+    # Else a half-copied drive leaks into the wizard, which cleans up only its own.
+    for file in "${files[@]}"; do
+      rm -f "$dest/${file##*/}"
+    done
+  fi
+fi
+
+umount "$mnt"
+exit $loaded

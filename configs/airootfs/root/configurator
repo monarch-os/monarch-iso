@@ -383,8 +383,21 @@ disk_form() {
 
 disk_form
 
+# Encryption is the default; Ctrl+C toggles it off instead of aborting.
+encrypt_installation=true
+
 while true; do
   clear_logo
+
+  if [[ $encrypt_installation == true ]]; then
+    encryption_summary="The disk will be encrypted with your password."
+    encryption_hint="Press Ctrl+C to install without encryption."
+    affirmative="Yes, format disk"
+  else
+    encryption_summary="The disk will NOT be encrypted."
+    encryption_hint="Press Ctrl+C to install with encryption."
+    affirmative="Yes, format without encryption"
+  fi
 
   # Warning in a double-bordered box
   echo
@@ -398,14 +411,26 @@ while true; do
     "$(gum style --foreground "$MONARCH_YELLOW" --bold "Warning")" \
     "" \
     "$(gum style --foreground "$MONARCH_TEXT" "Everything on ${disk} will be overwritten.")" \
-    "$(gum style --foreground "$MONARCH_SURFACE" --faint "There is no recovery possible.")"
+    "$(gum style --foreground "$MONARCH_SURFACE" --faint "There is no recovery possible.")" \
+    "" \
+    "$(gum style --foreground "$MONARCH_TEXT" "$encryption_summary")" \
+    "$(gum style --foreground "$MONARCH_SURFACE" --faint "$encryption_hint")"
 
   echo
-  if gum confirm --affirmative "Yes, format disk" --negative "No, change it" "Confirm overwriting ${disk}"; then
-    break
-  else
-    disk_form
-  fi
+  gum confirm --affirmative "$affirmative" --negative "No, change it" "Confirm overwriting ${disk}"
+
+  case $? in
+    0) break ;;
+    1) disk_form ;;
+    130)
+      if [[ $encrypt_installation == true ]]; then
+        encrypt_installation=false
+      else
+        encrypt_installation=true
+      fi
+      ;;
+    *) abort ;;
+  esac
 done
 
 # Launch screen
@@ -434,10 +459,15 @@ password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
 username_escaped=$(echo -n "$username" | jq -Rsa)
 
+# Left out entirely when there is nothing to unlock.
+credentials_encryption_line=""
+if [[ $encrypt_installation == true ]]; then
+  credentials_encryption_line="    \"encryption_password\": $password_escaped,"$'\n'
+fi
+
 cat <<-_EOF_ >user_credentials.json
 {
-    "encryption_password": $password_escaped,
-    "root_enc_password": $password_hash_escaped,
+$credentials_encryption_line    "root_enc_password": $password_hash_escaped,
     "users": [
         {
             "enc_password": $password_hash_escaped,
@@ -468,6 +498,24 @@ main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_rese
 
 # Use CachyOS kernel (has T2 support built-in)
 kernel_choice="linux-cachyos"
+
+# Keyed to the root partition by obj_id; absent, archinstall installs to a plain
+# btrfs root. Opens with a comma: the substitution drops the trailing newline.
+disk_encryption_json=""
+if [[ $encrypt_installation == true ]]; then
+  disk_encryption_json=$(
+    cat <<-_EOF_
+,
+        "disk_encryption": {
+            "encryption_type": "luks",
+            "lvm_volumes": [],
+            "iter_time": 2000,
+            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
+            "encryption_password": $password_escaped
+        }
+_EOF_
+  )
+fi
 
 cat <<-_EOF_ >user_configuration.json
 {
@@ -538,14 +586,7 @@ cat <<-_EOF_ >user_configuration.json
                 ],
                 "wipe": true
             }
-        ],
-        "disk_encryption": {
-            "encryption_type": "luks",
-            "lvm_volumes": [],
-            "iter_time": 2000,
-            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
-            "encryption_password": $password_escaped
-        }
+        ]$disk_encryption_json
     },
     "hostname": "$hostname",
     "kernels": [ "$kernel_choice" ],
