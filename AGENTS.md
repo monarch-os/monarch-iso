@@ -16,7 +16,7 @@ When porting anything from `omarchy-iso`, assume every `archlinux`, `linux-t2`, 
 
 | Path | What it is |
 |------|-----------|
-| `bin/` | Host-side commands: `monarch-iso-make`, `-boot`, `-release`, `-sign`, `-upload`, `-rclone-config`, plus `monarch-vm` (QEMU snapshot manager) |
+| `bin/` | Host-side commands: `monarch-iso-make`, `-boot`, `-release`, `-sign`, `-upload`, `-rclone-config`, plus `monarch-vm` (names and reboots the disks in `vm-saves/`) |
 | `builder/build-iso.sh` | Runs **inside** the CachyOS container; assembles airootfs and calls `mkarchiso` |
 | `builder/archinstall.packages` | Extra packages fed to the offline mirror for archinstall itself |
 | `builder/prune-offline-mirror.sh` | Trims the offline mirror to the exact resolved transaction before indexing |
@@ -126,9 +126,17 @@ Autoinstall images meant to come up unattended want encryption off.
 ```bash
 ./bin/monarch-iso-make            # build → ./release  (--no-cache, --no-boot-offer, --local-source, --dev)
 ./bin/monarch-iso-boot            # pick an ISO and boot it in QEMU  ([reuse] [offline])
-./bin/monarch-vm save|load|list   # snapshot a VM mid-install
+./bin/monarch-vm save|boot|list   # name, keep and reboot disks in vm-saves/
 ./bin/monarch-iso-release <ver>   # make + sign + upload
 ```
+
+Disks live in `vm-saves/` (gitignored, real storage — `/tmp` is a tmpfs and a
+30G image would be RAM). `monarch-iso-boot` writes `vm-saves/monarch-iso-boot.qcow2`
+unless `MONARCH_VM_DISK` says otherwise, with its EFI variables alongside as
+`<disk>-OVMF_VARS.4m.fd`. `monarch-vm` reads and writes that same layout: `save`
+copies the current disk to `vm-saves/<name>.qcow2`, `boot <name>` starts it in
+place. Both honour `MONARCH_VM_DISK`, and `test/vm-snapshot-test.sh` asserts they
+agree — they did not for a while, and `boot` silently started the wrong VM.
 
 Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`). `--local-source` bind-mounts `$MONARCH_PATH` instead of cloning.
 
@@ -137,7 +145,7 @@ Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's
 A full build takes a long time and downloads several GB. Before rebuilding, cheap checks that catch most mistakes:
 
 - `bash -n` on every script you touched
-- `bash test/prune-offline-mirror-test.sh`, `bash test/cidata-load-test.sh`, `bash test/install-config-test.sh` — the test suites here; each runs in a tempdir and needs no container
+- `bash test/prune-offline-mirror-test.sh`, `bash test/cidata-load-test.sh`, `bash test/install-config-test.sh`, `bash test/vm-snapshot-test.sh` — the test suites here; each runs in a tempdir and needs no container
 - The configurator has a dry-run: `bash configs/airootfs/root/configurator dry` renders the TUI and prints the generated JSON without touching a disk (needs `gum` on the host)
 - `jq empty user_configuration.json` on that dry-run output — a malformed heredoc silently breaks the install otherwise
 

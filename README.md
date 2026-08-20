@@ -37,6 +37,24 @@ Set `MONARCH_VM_CIDATA=cidata.iso` to attach an autoinstall drive to the test VM
 and `MONARCH_VM_SSH_PORT` to forward a port other than 2222 when one VM is
 already running.
 
+### Keeping a VM around
+
+Installed disks live in `vm-saves/`, next to the EFI variables that go with them.
+`monarch-iso-boot` uses `vm-saves/monarch-iso-boot.qcow2` unless
+`MONARCH_VM_DISK` names another, and formats it on every run — `reuse` is what
+keeps an installed system.
+
+```bash
+./bin/monarch-vm save noctalia-v5   # copy the current disk under a name
+./bin/monarch-vm list               # what is saved, and how much space it takes
+./bin/monarch-vm boot noctalia-v5   # boot it again, no ISO involved
+```
+
+`boot` starts the named disk in place, so anything the guest writes stays in the
+snapshot. Take a copy first (`save` again under another name) when you want a
+pristine one to come back to; on btrfs that copy is instant and costs no space
+until one of the two is written to.
+
 Set `MONARCH_VM_SOFTWARE_GL=1` when the host GPU cannot be trusted with
 virglrenderer — on some AMD hardware a guest desktop makes it fault and reset,
 which kills QEMU. The guest still sees an accelerated virtio-gpu (niri refuses a

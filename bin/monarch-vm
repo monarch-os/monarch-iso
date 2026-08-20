@@ -4,8 +4,18 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VM_DIR="$(dirname "$SCRIPT_DIR")/vm-saves"
-TMP_DISK="/tmp/monarch-iso-boot.qcow2"
-TMP_OVMF="/tmp/OVMF_VARS.4m.fd"
+
+# The same disk monarch-iso-boot would use, override included, so `save` with no
+# argument snapshots whatever was last booted rather than a guess.
+WORK_DISK="${MONARCH_VM_DISK:-$VM_DIR/monarch-iso-boot.qcow2}"
+
+ovmf_of() {
+  echo "${1%.qcow2}-OVMF_VARS.4m.fd"
+}
+
+disk_of() {
+  echo "$VM_DIR/$1.qcow2"
+}
 
 mkdir -p "$VM_DIR"
 
@@ -17,73 +27,92 @@ save_vm() {
     [[ -z "$name" ]] && exit 1
   fi
 
-  if [[ ! -f "$TMP_DISK" || ! -f "$TMP_OVMF" ]]; then
-    echo "Error: No active VM found in /tmp"
+  if [[ ! -f "$WORK_DISK" ]]; then
+    echo "No disk at $WORK_DISK"
     echo "Boot a VM first with: monarch-iso-boot [iso]"
     exit 1
   fi
 
-  local vm_path="$VM_DIR/$name"
+  local disk
+  disk=$(disk_of "$name")
 
-  if [[ -d "$vm_path" ]]; then
-    if ! gum confirm "VM '$name' exists. Overwrite?"; then
+  if [[ -e "$disk" ]]; then
+    if ! gum confirm "Snapshot '$name' exists. Overwrite?"; then
       exit 0
     fi
   fi
 
-  mkdir -p "$vm_path"
+  echo "Saving snapshot '$name'..."
+  # --reflink=auto: vm-saves sits on btrfs here, where a 30G image copies
+  # instantly and shares its extents until one side is written to.
+  cp --reflink=auto "$WORK_DISK" "$disk"
+  if [[ -f $(ovmf_of "$WORK_DISK") ]]; then
+    cp "$(ovmf_of "$WORK_DISK")" "$(ovmf_of "$disk")"
+  fi
 
-  echo "Saving VM snapshot '$name'..."
-  cp "$TMP_DISK" "$vm_path/monarch-iso-boot.qcow2"
-  cp "$TMP_OVMF" "$vm_path/OVMF_VARS.4m.fd"
+  gum style --foreground 212 "✓ Saved to $disk"
+}
 
-  gum style --foreground 212 "✓ Saved to $vm_path"
+snapshot_names() {
+  local disk work
+  work=$(realpath -m "$WORK_DISK")
+  for disk in "$VM_DIR"/*.qcow2; do
+    [[ -f "$disk" ]] || continue
+    [[ $(realpath -m "$disk") == "$work" ]] && continue
+    basename "$disk" .qcow2
+  done
 }
 
 list_vms() {
-  if [[ ! -d "$VM_DIR" ]] || [[ -z "$(ls -A "$VM_DIR")" ]]; then
+  local names
+  names=$(snapshot_names)
+
+  if [[ -z "$names" ]]; then
     echo "No VM snapshots found"
     return 1
   fi
 
   echo "Available VM snapshots:"
-  for vm in "$VM_DIR"/*; do
-    [[ -d "$vm" ]] && echo "  • $(basename "$vm")"
-  done
+  local name
+  while read -r name; do
+    echo "  • $name ($(du -h "$(disk_of "$name")" | cut -f1) on disk)"
+  done <<<"$names"
 }
 
 boot_vm() {
   local name="$1"
 
-  if [[ -z "$(ls -A "$VM_DIR" 2>/dev/null)" ]]; then
+  if [[ -z "$(snapshot_names)" ]]; then
     echo "No VM snapshots available"
     exit 1
   fi
 
   if [[ -z "$name" ]]; then
-    name=$(ls -1 "$VM_DIR" | gum choose --header "Select VM to boot:")
+    name=$(snapshot_names | gum choose --header "Select VM to boot:")
     [[ -z "$name" ]] && exit 0
   fi
 
-  local vm_path="$VM_DIR/$name"
+  local disk
+  disk=$(disk_of "$name")
 
-  if [[ ! -d "$vm_path" ]]; then
+  if [[ ! -f "$disk" ]]; then
     echo "Error: VM '$name' not found"
     list_vms
     exit 1
   fi
 
-  if [[ -f "$TMP_DISK" ]] && ! gum confirm "Override existing /tmp VM?"; then
-    exit 0
+  if [[ ! -f $(ovmf_of "$disk") ]]; then
+    echo "Error: '$name' has no EFI variables at $(ovmf_of "$disk")"
+    echo "Boot it once from an ISO to create them:"
+    echo "  MONARCH_VM_DISK=$disk ./bin/monarch-iso-boot release/<iso> reuse"
+    exit 1
   fi
 
-  echo "Copying VM '$name' to /tmp..."
-  cp "$vm_path/monarch-iso-boot.qcow2" "$TMP_DISK"
-  cp "$vm_path/OVMF_VARS.4m.fd" "$TMP_OVMF"
+  gum style --foreground 212 "✓ Booting '$name' in place — writes land in the snapshot"
 
-  gum style --foreground 212 "✓ VM ready. Booting..."
-
-  exec monarch-iso-boot /dev/null reuse
+  # /dev/null stands in for the ISO: there is nothing to install from, only the
+  # disk to boot. `reuse` is what stops monarch-iso-boot from formatting it.
+  MONARCH_VM_DISK="$disk" exec monarch-iso-boot /dev/null reuse
 }
 
 case "${1:-}" in
@@ -101,11 +130,12 @@ case "${1:-}" in
       "$(gum style --bold 'monarch-vm') - VM snapshot manager" \
       "" \
       "$(gum style --foreground 245 'Commands:')" \
-      "  save [name]  Save current VM from /tmp" \
-      "  boot [name]  Boot saved VM (interactive if no name)" \
+      "  save [name]  Copy the current disk to vm-saves/<name>.qcow2" \
+      "  boot [name]  Boot a saved disk (interactive if no name)" \
       "  list         List available VMs" \
       "" \
-      "$(gum style --foreground 245 'Current VMs:')"
+      "$(gum style --foreground 245 "Current disk: $WORK_DISK")" \
+      "$(gum style --foreground 245 'Snapshots:')"
     list_vms 2>/dev/null || echo "  None"
     ;;
 esac
