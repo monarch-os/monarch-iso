@@ -1,22 +1,11 @@
 #!/bin/bash
 #
-# Autoinstall: a drive labeled cidata (the cloud-init NoCloud label, so Proxmox,
-# libvirt and Packer all know how to attach one) carrying the configurator's own
-# output files stands in for the wizard. Copy those files into /root and
-# everything downstream runs the ordinary path against ordinary inputs.
+# Copy the configurator's output files off a cidata drive into /root, so the
+# wizard can be skipped. Exit 0 when that happened; anything else means this is
+# not an autoinstall drive and the caller falls back to the wizard.
 #
-# Exits 0 when an autoinstall drive was loaded and the configurator can be
-# skipped. The two files the configurator always writes are both required; the
-# rest are optional here exactly as they are there. Anything less than that pair
-# means this isn't an autoinstall drive, and the caller falls back to the wizard.
-#
-# The optional argument prefixes every path the script touches; tests use it to
-# run against a sandbox instead of the live system.
-#
-# Ported from omarchy-iso quattro. Deferred provisioning, the Tailscale authkey
-# and the encryption flag file have no equivalent here — Monarch reads the
-# encryption choice straight out of user_configuration.json — so their inputs
-# were left behind.
+# The optional argument prefixes every path touched, so tests can run against a
+# sandbox. See AGENTS.md "Autoinstall".
 
 set -uo pipefail
 
@@ -25,11 +14,11 @@ by_label=$root/dev/disk/by-label
 dest=$root/root
 mnt=$root/run/cidata
 
-# The by-label symlinks come from udev, and on a fast boot this can run before
-# device enumeration has finished. Wait for the queue to drain instead of racing
-# it and silently dropping a headless install into the wizard.
+# On a fast boot this can run before udev has finished enumerating, which would
+# silently drop a headless install into the wizard.
 udevadm settle 2>/dev/null || true
 
+# mkfs.vfat uppercases the label, genisoimage does not.
 device=""
 for label in cidata CIDATA; do
   [[ -e $by_label/$label ]] && { device=$by_label/$label; break; }
@@ -42,11 +31,9 @@ mount -o ro "$device" "$mnt" || exit 1
 required_inputs=(user_configuration.json user_credentials.json)
 optional_inputs=(user_full_name.txt user_email_address.txt authorized_keys)
 
-# Clear any inputs a previous load in this live session left in /root before
-# copying the current drive: a stale authorized_keys would otherwise authorize
-# keys the current drive never carried. The interactive wizard writes these same
-# names, but a cidata load always precedes it, so nothing of the user's is
-# discarded here.
+# A previous load in the same live session may have left inputs behind: a stale
+# authorized_keys would authorize keys the current drive never carried. Nothing
+# of the user's is lost, since a cidata load always precedes the wizard.
 for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
   rm -f "$dest/$file"
 done
@@ -61,9 +48,8 @@ if [[ -f $mnt/user_configuration.json && -f $mnt/user_credentials.json ]]; then
   if cp "${files[@]}" "$dest"/; then
     loaded=0
   else
-    # A partial copy must not leave files behind: the wizard cleans up only what
-    # it writes itself, so a half-copied authorized_keys would leak into the
-    # interactive install that follows.
+    # The wizard cleans up only what it writes, so a half-copied drive would
+    # leak into the interactive install that follows.
     for file in "${files[@]}"; do
       rm -f "$dest/${file##*/}"
     done

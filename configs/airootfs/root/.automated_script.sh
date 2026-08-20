@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Autoinstall may supply SSH keys for the installed system. Both halves of the
-# work below key off this one file: openssh has to be pulled from the offline
-# mirror while the offline pacman.conf is still in place, and the service and
-# firewall can only be touched once the Monarch installer has run.
+# Set by an autoinstall drive. Read in two places, because openssh must be
+# pulled before the Monarch installer and enabled after it.
 AUTHORIZED_KEYS=/root/authorized_keys
 
 use_monarch_helpers() {
@@ -17,17 +15,16 @@ use_monarch_helpers() {
 run_configurator() {
   set_tokyo_night_colors
 
-  # Autoinstall: a cidata drive carrying the configurator's own output files
-  # stands in for the wizard. monarch-cidata-load copies them into /root and
-  # everything downstream runs the ordinary path against ordinary inputs.
+  # An autoinstall drive stands in for the wizard; everything downstream then
+  # runs the ordinary path against ordinary inputs.
   if /usr/local/bin/monarch-cidata-load; then
     echo "Autoinstall configuration found on the cidata drive; skipping the configurator."
   else
     ./configurator
   fi
 
-  # A drive whose credentials name no user would otherwise fail much later, in
-  # the middle of the chroot install, with nothing pointing back at the drive.
+  # Caught here rather than mid-chroot, where nothing would point back at the
+  # drive that caused it.
   MONARCH_USER="$(jq -r '.users[0].username // empty' user_credentials.json)"
   if [[ -z $MONARCH_USER ]]; then
     echo "user_credentials.json names no user; cannot install." >&2
@@ -57,19 +54,15 @@ install_monarch() {
   chroot_bash -lc "source /home/$MONARCH_USER/.local/share/monarch/install.sh"
 }
 
-# Make the installed machine reachable over SSH with the keys an autoinstall
-# drive supplied. Monarch installs neither openssh nor an open port by default —
-# install/first-run/firewall.sh runs ufw default-deny and opens only LocalSend
-# and docker DNS — so the keys, the service and the firewall all have to be done
-# here. Runs after the Monarch installer because ufw only exists once it has.
+# Install the keys an autoinstall drive supplied, and open the door: Monarch
+# enables no sshd and its firewall opens nothing beyond LocalSend and docker DNS.
+# Runs after the Monarch installer, because ufw only exists once it has.
 configure_ssh_access() {
   [[ -f $AUTHORIZED_KEYS ]] || return 0
 
+  # An install that "succeeds" into a machine nobody can log into is worse than
+  # one that stops with the reason on screen, so no usable key is fatal.
   local keys
-  # sshd's own format, one public key per line, with blank lines and # comments
-  # dropped. An install that "succeeds" into a machine nobody can log into is
-  # worse than one that stops with the reason on screen, so an empty result is
-  # fatal rather than skipped.
   keys=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$AUTHORIZED_KEYS" |
     grep -v '^\(#\|$\)' || true)
   if [[ -z $keys ]]; then
@@ -85,19 +78,15 @@ configure_ssh_access() {
   printf '%s\n' "$keys" >"$ssh_dir/authorized_keys"
   chmod 600 "$ssh_dir/authorized_keys"
 
-  # Ask the target for the uid rather than assuming the first user is 1000, and
-  # let a failure abort: a root-owned authorized_keys is one sshd refuses to
-  # read, which would look like the key was never installed.
+  # Ask the target for the uid rather than assuming 1000, and let a failure
+  # abort: sshd refuses to read a root-owned authorized_keys.
   arch-chroot /mnt chown -R "$MONARCH_USER:$MONARCH_USER" "/home/$MONARCH_USER/.ssh"
 
   arch-chroot /mnt systemctl enable sshd.service
 
-  # ufw runs default-deny incoming, so an enabled sshd is still unreachable —
-  # connections time out rather than being refused. ufw cannot reach netfilter
-  # from inside the chroot and exits non-zero saying so, but it writes the rule
-  # to user.rules first, and that file is what ufw.service loads on first boot.
-  # So the exit status is the wrong thing to check here; the rule landing in the
-  # file is the thing that matters.
+  # ufw cannot reach netfilter from inside a chroot and exits non-zero saying
+  # so, but it writes the rule to user.rules first — and that file is what
+  # ufw.service loads on first boot. Check the file, not the exit status.
   arch-chroot /mnt ufw allow ssh || true
 
   if ! grep -q -- '--dport 22 -j ACCEPT' /mnt/etc/ufw/user.rules; then
@@ -242,11 +231,9 @@ install_base_system() {
   mkdir -p /mnt/var/cache/monarch/mirror/offline
   mount --bind /var/cache/monarch/mirror/offline /mnt/var/cache/monarch/mirror/offline
 
-  # Autoinstall SSH: openssh is in the offline mirror but not on the installed
-  # system, and the Monarch installer replaces this pacman.conf with the online
-  # one on its way through, so the package has to be pulled here — while the
-  # offline repo is both configured and mounted. -Sy because the target's own
-  # sync databases were written by archinstall, which never saw this repo.
+  # The only window where the offline repo is both configured and mounted: the
+  # Monarch installer swaps this pacman.conf for the online one. -Sy because
+  # archinstall wrote the target's databases and never saw this repo.
   if [[ -f $AUTHORIZED_KEYS ]]; then
     arch-chroot /mnt pacman -Sy --noconfirm --needed openssh
   fi

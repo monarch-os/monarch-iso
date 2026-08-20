@@ -383,10 +383,8 @@ disk_form() {
 
 disk_form
 
-# Full-disk encryption is the default, and Ctrl+C on the confirmation toggles it
-# off instead of aborting. That keeps the wizard at three steps and keeps
-# encryption the answer you get by not thinking about it. Ported from omarchy-iso
-# quattro, which offers the choice the same way.
+# Encryption is the default; Ctrl+C on the confirmation toggles it off instead
+# of aborting, so the wizard stays at three steps (as in omarchy-iso quattro).
 encrypt_installation=true
 
 while true; do
@@ -462,8 +460,8 @@ password_escaped=$(echo -n "$password" | jq -Rsa)
 password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
 username_escaped=$(echo -n "$username" | jq -Rsa)
 
-# archinstall reads the LUKS passphrase from the credentials file; an
-# unencrypted install has nothing to do with it, so it is left out entirely.
+# archinstall reads the LUKS passphrase from here; leave it out entirely when
+# there is nothing to unlock.
 credentials_encryption_line=""
 if [[ $encrypt_installation == true ]]; then
   credentials_encryption_line="    \"encryption_password\": $password_escaped,"$'\n'
@@ -503,10 +501,9 @@ main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_rese
 # Use CachyOS kernel (has T2 support built-in)
 kernel_choice="linux-cachyos"
 
-# Encryption is keyed to the root partition by obj_id, so the block has to be
-# built next to the partition table it refers to. Absent, archinstall installs
-# to a plain btrfs root. The command substitution drops the trailing newline,
-# which is why the block opens with the comma that follows device_modifications.
+# Keyed to the root partition by obj_id, so it belongs next to the partition
+# table it refers to; absent, archinstall installs to a plain btrfs root. Opens
+# with a comma because the substitution below drops the trailing newline.
 disk_encryption_json=""
 if [[ $encrypt_installation == true ]]; then
   disk_encryption_json=$(
