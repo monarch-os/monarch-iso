@@ -35,6 +35,17 @@ Run `./bin/monarch-iso-boot [release/monarch.iso]`.
 
 Set `MONARCH_VM_CIDATA=cidata.iso` to attach an autoinstall drive to the test VM.
 
+Set `MONARCH_VM_SOFTWARE_GL=1` when the host GPU cannot be trusted with
+virglrenderer — on some AMD hardware a guest desktop makes it fault and reset,
+which kills QEMU. The guest still sees an accelerated virtio-gpu (niri refuses a
+software renderer of its own and would show nothing), but the host draws on the
+CPU.
+
+Only for testing interface and logic. Under it you are not exercising the
+graphics stack Monarch ships — no vendor driver path, no dmabuf, no explicit
+sync, no VRR — and frame timings mean nothing. Release testing stays on the
+accelerated path.
+
 ## Autoinstall
 
 The shipped ISO installs itself with no keyboard when it finds its configuration

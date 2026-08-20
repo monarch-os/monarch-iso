@@ -84,6 +84,15 @@ if ! pacman -Q qemu-full >/dev/null || ! pacman -Q edk2-ovmf >/dev/null; then
   sudo pacman -S --noconfirm --needed --quiet qemu-full edk2-ovmf
 fi
 
+# Host-side GL on the CPU, for hosts where virglrenderer faults the GPU and takes
+# QEMU down with it. The guest still sees an accelerated virtio-gpu: niri refuses
+# a software EGL renderer and would come up with no outputs at all.
+if [[ -n ${MONARCH_VM_SOFTWARE_GL:-} ]]; then
+  export LIBGL_ALWAYS_SOFTWARE=1
+  export GALLIUM_DRIVER=llvmpipe
+  echo "MONARCH_VM_SOFTWARE_GL: host-side GL runs on the CPU; do not measure rendering or performance from this run." >&2
+fi
+
 if [[ -z ${WAYLAND_DISPLAY:-} && -z ${DISPLAY:-} ]]; then
   while IFS='=' read -r name value; do
     case "$name" in
