@@ -1,0 +1,143 @@
+#!/bin/bash
+
+# Builds the autoinstall drive the ISO looks for. See README "Autoinstall".
+
+set -e
+
+BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
+
+USERNAME=""
+PASSWORD="monarch"
+KEY_FILE=""
+DISK="/dev/vda"
+DISK_SIZE="30G"
+HOSTNAME_="monarch"
+TIMEZONE=""
+KEYBOARD=""
+ENCRYPT=false
+FULL_NAME=""
+EMAIL=""
+OUTPUT="$BUILD_ROOT/vm-saves/cidata.iso"
+
+usage() {
+  cat <<EOF
+Usage: monarch-iso-cidata --user NAME [options]
+
+  --user NAME        Account created by the install (required)
+  --password PW      Account, root and LUKS password (default: $PASSWORD)
+  --key FILE         SSH public keys, sshd's own format (default: ~/.ssh/id_ed25519.pub)
+  --disk DEV         Install target inside the guest (default: $DISK)
+  --size SIZE        Guest disk size, e.g. 30G (default: $DISK_SIZE)
+  --hostname NAME    (default: $HOSTNAME_)
+  --timezone TZ      (default: this host's)
+  --keyboard LAYOUT  (default: this host's)
+  --encrypt          Encrypt the root partition (default: no)
+  --full-name NAME   Git identity (default: git config user.name)
+  --email ADDRESS    Git identity (default: git config user.email)
+  -o, --output FILE  (default: $OUTPUT)
+
+Boot it with:
+  MONARCH_VM_CIDATA=<output> ./bin/monarch-iso-boot release/monarch.iso
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --user) USERNAME="$2"; shift 2 ;;
+    --password) PASSWORD="$2"; shift 2 ;;
+    --key) KEY_FILE="$2"; shift 2 ;;
+    --disk) DISK="$2"; shift 2 ;;
+    --size) DISK_SIZE="$2"; shift 2 ;;
+    --hostname) HOSTNAME_="$2"; shift 2 ;;
+    --timezone) TIMEZONE="$2"; shift 2 ;;
+    --keyboard) KEYBOARD="$2"; shift 2 ;;
+    --encrypt) ENCRYPT=true; shift ;;
+    --full-name) FULL_NAME="$2"; shift 2 ;;
+    --email) EMAIL="$2"; shift 2 ;;
+    -o | --output) OUTPUT="$2"; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+if [[ -z $USERNAME ]]; then
+  echo "monarch-iso-cidata: --user is required" >&2
+  usage >&2
+  exit 1
+fi
+
+if ! [[ $USERNAME =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+  echo "monarch-iso-cidata: '$USERNAME' is not a valid username" >&2
+  exit 1
+fi
+
+command -v xorrisofs >/dev/null || {
+  echo "monarch-iso-cidata: xorrisofs not found (pacman -S libisoburn)" >&2
+  exit 1
+}
+
+[[ -n $KEY_FILE ]] || KEY_FILE="$HOME/.ssh/id_ed25519.pub"
+if [[ ! -f $KEY_FILE ]]; then
+  echo "monarch-iso-cidata: no SSH key at $KEY_FILE (pass --key)" >&2
+  exit 1
+fi
+
+# The installer fails an install rather than produce a machine nobody can reach;
+# fail here instead, where it costs nothing.
+if ! grep -qvE '^[[:space:]]*(#|$)' "$KEY_FILE"; then
+  echo "monarch-iso-cidata: $KEY_FILE holds no usable key" >&2
+  exit 1
+fi
+
+case "${DISK_SIZE^^}" in
+  *G) disk_size_bytes=$(( ${DISK_SIZE%[gG]} * 1024 * 1024 * 1024 )) ;;
+  *M) disk_size_bytes=$(( ${DISK_SIZE%[mM]} * 1024 * 1024 )) ;;
+  *[!0-9]*) echo "monarch-iso-cidata: cannot read a size from '$DISK_SIZE'" >&2; exit 1 ;;
+  *) disk_size_bytes="$DISK_SIZE" ;;
+esac
+
+[[ -n $TIMEZONE ]] || TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)
+[[ -n $KEYBOARD ]] || KEYBOARD=$(localectl status 2>/dev/null | sed -n 's/.*VC Keymap: *//p' | head -1)
+[[ -n $KEYBOARD && $KEYBOARD != "n/a" ]] || KEYBOARD="us"
+[[ -n $FULL_NAME ]] || FULL_NAME=$(git -C "$BUILD_ROOT" config user.name || true)
+[[ -n $EMAIL ]] || EMAIL=$(git -C "$BUILD_ROOT" config user.email || true)
+
+staging=$(mktemp -d)
+trap 'rm -rf "$staging"' EXIT
+
+(
+  cd "$staging"
+
+  disk="$DISK"
+  disk_size="$disk_size_bytes"
+  username="$USERNAME"
+  password="$PASSWORD"
+  password_hash=$(printf '%s' "$PASSWORD" | openssl passwd -6 -stdin)
+  full_name="$FULL_NAME"
+  email_address="$EMAIL"
+  hostname="$HOSTNAME_"
+  timezone="$TIMEZONE"
+  keyboard="$KEYBOARD"
+  encrypt_installation="$ENCRYPT"
+
+  source "$BUILD_ROOT/configs/airootfs/root/write-install-config"
+)
+
+grep -vE '^[[:space:]]*(#|$)' "$KEY_FILE" >"$staging/authorized_keys"
+
+jq empty "$staging/user_configuration.json"
+jq empty "$staging/user_credentials.json"
+
+mkdir -p "${OUTPUT%/*}"
+xorrisofs -output "$OUTPUT" -volid cidata -joliet -rock "$staging" >/dev/null 2>&1
+
+echo "Wrote $OUTPUT"
+echo "  user       $USERNAME on $DISK ($DISK_SIZE), $HOSTNAME_, $TIMEZONE, $KEYBOARD"
+echo "  encryption $([[ $ENCRYPT == true ]] && echo "yes" || echo "no")"
+echo "  keys       $(wc -l <"$staging/authorized_keys") from $KEY_FILE"
+
+if [[ $ENCRYPT == true ]]; then
+  echo
+  echo "Encrypted installs stay unreachable until the passphrase is typed at the" >&2
+  echo "console, so this drive will not produce a machine that comes up on SSH." >&2
+fi

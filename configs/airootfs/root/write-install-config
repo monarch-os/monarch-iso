@@ -1,0 +1,180 @@
+# Writes the four files archinstall and the Monarch installer consume, into the
+# current directory. Sourced by the configurator, which collects the answers
+# interactively, and by bin/monarch-iso-cidata, which takes them as flags — one
+# copy of the schema, so a drive built by hand cannot drift from the wizard.
+#
+# Expects: disk disk_size username password password_hash full_name
+#          email_address hostname timezone keyboard encrypt_installation
+
+# Save user full name and email address, so the autostart can
+# set them as MONARCH_USER_NAME and MONARCH_USER_EMAIL
+echo "$full_name" >user_full_name.txt
+echo "$email_address" >user_email_address.txt
+
+# Escape username and password for safe inclusion
+password_escaped=$(echo -n "$password" | jq -Rsa)
+password_hash_escaped=$(echo -n "$password_hash" | jq -Rsa)
+username_escaped=$(echo -n "$username" | jq -Rsa)
+
+# Left out entirely when there is nothing to unlock.
+credentials_encryption_line=""
+if [[ $encrypt_installation == true ]]; then
+  credentials_encryption_line="    \"encryption_password\": $password_escaped,"$'\n'
+fi
+
+cat <<-_EOF_ >user_credentials.json
+{
+$credentials_encryption_line    "root_enc_password": $password_hash_escaped,
+    "users": [
+        {
+            "enc_password": $password_hash_escaped,
+            "groups": [],
+            "sudo": true,
+            "username": $username_escaped
+        }
+    ]
+}
+_EOF_
+
+mib=$((1024 * 1024))
+gib=$((mib * 1024))
+disk_size_in_mib=$((disk_size / mib * mib)) # Rounds to nearest MiB
+
+gpt_backup_reserve=$((mib))
+boot_partition_start=$((mib))
+boot_partition_size=$((2 * gib))
+
+main_partition_start=$((boot_partition_size + boot_partition_start))
+main_partition_size=$((disk_size_in_mib - main_partition_start - gpt_backup_reserve))
+
+# Use CachyOS kernel (has T2 support built-in)
+kernel_choice="linux-cachyos"
+
+# Keyed to the root partition by obj_id; absent, archinstall installs to a plain
+# btrfs root. Opens with a comma: the substitution drops the trailing newline.
+disk_encryption_json=""
+if [[ $encrypt_installation == true ]]; then
+  disk_encryption_json=$(
+    cat <<-_EOF_
+,
+        "disk_encryption": {
+            "encryption_type": "luks",
+            "lvm_volumes": [],
+            "iter_time": 2000,
+            "partitions": [ "8c2c2b92-1070-455d-b76a-56263bab24aa" ],
+            "encryption_password": $password_escaped
+        }
+_EOF_
+  )
+fi
+
+cat <<-_EOF_ >user_configuration.json
+{
+    "app_config": null,
+    "archinstall-language": "English",
+    "auth_config": {},
+    "audio_config": { "audio": "pipewire" },
+    "bootloader": "Limine",
+    "custom_commands": [],
+    "disk_config": {
+        "btrfs_options": {
+          "snapshot_config": {
+            "type": "Snapper"
+          }
+        },
+        "config_type": "default_layout",
+        "device_modifications": [
+            {
+                "device": "$disk",
+                "partitions": [
+                    {
+                        "btrfs": [],
+                        "dev_path": null,
+                        "flags": [ "boot", "esp" ],
+                        "fs_type": "fat32",
+                        "mount_options": [],
+                        "mountpoint": "/boot",
+                        "obj_id": "ea21d3f2-82bb-49cc-ab5d-6f81ae94e18d",
+                        "size": {
+                            "sector_size": { "unit": "B", "value": 512 },
+                            "unit": "B",
+                            "value": $boot_partition_size
+                        },
+                        "start": {
+                            "sector_size": { "unit": "B", "value": 512 },
+                            "unit": "B",
+                            "value": $boot_partition_start
+                        },
+                        "status": "create",
+                        "type": "primary"
+                    },
+                    {
+                        "btrfs": [
+                            { "mountpoint": "/", "name": "@" },
+                            { "mountpoint": "/home", "name": "@home" },
+                            { "mountpoint": "/var/log", "name": "@log" },
+                            { "mountpoint": "/var/cache/pacman/pkg", "name": "@pkg" }
+                        ],
+                        "dev_path": null,
+                        "flags": [],
+                        "fs_type": "btrfs",
+                        "mount_options": [ "compress=zstd" ],
+                        "mountpoint": null,
+                        "obj_id": "8c2c2b92-1070-455d-b76a-56263bab24aa",
+                        "size": {
+                            "sector_size": { "unit": "B", "value": 512 },
+                            "unit": "B",
+                            "value": $main_partition_size
+                        },
+                        "start": {
+                            "sector_size": { "unit": "B", "value": 512 },
+                            "unit": "B",
+                            "value": $main_partition_start
+                        },
+                        "status": "create",
+                        "type": "primary"
+                    }
+                ],
+                "wipe": true
+            }
+        ]$disk_encryption_json
+    },
+    "hostname": "$hostname",
+    "kernels": [ "$kernel_choice" ],
+    "network_config": { "type": "iso" },
+    "ntp": true,
+    "parallel_downloads": 8,
+    "script": null,
+    "services": [],
+    "swap": true,
+    "timezone": "$timezone",
+    "locale_config": {
+        "kb_layout": "$keyboard",
+        "sys_enc": "UTF-8",
+        "sys_lang": "en_US.UTF-8"
+    },
+    "mirror_config": {
+        "custom_repositories": [],
+        "custom_servers": [
+            {"url": "https://mirror.cachyos.org/repo/\$arch/\$repo"},
+            {"url": "https://cdn.cachyos.org/repo/\$arch/\$repo"}
+        ],
+        "mirror_regions": {},
+        "optional_repositories": []
+    },
+    "packages": [
+        "base-devel",
+        "git",
+        "archlinux-keyring",
+        "cachyos-keyring",
+        "monarch-keyring",
+        "snapper"
+    ],
+    "profile_config": {
+        "gfx_driver": null,
+        "greeter": null,
+        "profile": {}
+    },
+    "version": "3.0.9"
+}
+_EOF_
