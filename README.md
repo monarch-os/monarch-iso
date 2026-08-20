@@ -33,7 +33,9 @@ MONARCH_INSTALLER_REPO="https://github.com/monuser/monarch-fork.git" MONARCH_INS
 
 Run `./bin/monarch-iso-boot [release/monarch.iso]`.
 
-Set `MONARCH_VM_CIDATA=cidata.iso` to attach an autoinstall drive to the test VM.
+Set `MONARCH_VM_CIDATA=cidata.iso` to attach an autoinstall drive to the test VM,
+and `MONARCH_VM_SSH_PORT` to forward a port other than 2222 when one VM is
+already running.
 
 Set `MONARCH_VM_SOFTWARE_GL=1` when the host GPU cannot be trusted with
 virglrenderer — on some AMD hardware a guest desktop makes it fault and reset,
@@ -57,10 +59,28 @@ entry.
 `cidata` is the cloud-init `NoCloud` label, so Proxmox, libvirt, and Packer
 already know how to attach one.
 
+### Building the drive
+
+```bash
+./bin/monarch-iso-cidata --user y0no --key ~/.ssh/id_ed25519.pub
+```
+
+Writes `vm-saves/cidata.iso`. `--help` lists the rest: `--disk`, `--size`,
+`--hostname`, `--timezone`, `--keyboard`, `--encrypt`, `--password`, `-o`. The
+defaults describe a test VM — `/dev/vda`, 30G, unencrypted, this host's timezone
+and keyboard layout, your git identity.
+
+Boot it with:
+
+```bash
+MONARCH_VM_CIDATA=vm-saves/cidata.iso ./bin/monarch-iso-boot release/monarch.iso
+```
+
 ### Configuration files
 
-These are the configurator's own output files, so the way to get a starting set
-is to run one interactive install and copy what it wrote out of `/root`.
+The helper writes these with the configurator's own code, so a generated drive
+cannot drift from what the wizard produces. Build one by hand if you need
+something the flags do not cover.
 
 | File | Required | Purpose |
 |------|----------|---------|
@@ -99,7 +119,7 @@ has been typed at the console — sshd starts after the root filesystem is
 unlocked. Autoinstall images meant to come up unattended want the
 `disk_encryption` block left out.
 
-### Building the drive
+### Building one by hand
 
 ```bash
 mkdir cidata

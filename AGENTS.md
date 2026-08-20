@@ -22,7 +22,8 @@ When porting anything from `omarchy-iso`, assume every `archlinux`, `linux-t2`, 
 | `builder/prune-offline-mirror.sh` | Trims the offline mirror to the exact resolved transaction before indexing |
 | `test/` | `bash test/<name>-test.sh`; no framework, no container needed |
 | `configs/` | Overlaid on top of `archiso/configs/releng/` — boot entries, pacman configs, `profiledef.sh`, airootfs |
-| `configs/airootfs/root/configurator` | The `gum` TUI the user sees at boot; writes `user_configuration.json` / `user_credentials.json` |
+| `configs/airootfs/root/configurator` | The `gum` TUI the user sees at boot; collects the answers |
+| `configs/airootfs/root/write-install-config` | Turns those answers into the archinstall input files; shared with `bin/monarch-iso-cidata` |
 | `configs/airootfs/usr/local/bin/monarch-cidata-load` | Autoinstall: loads those same files off a `cidata` drive so the TUI can be skipped |
 | `configs/airootfs/root/.automated_script.sh` | Autostarted on tty1; runs the configurator, then archinstall, then the Monarch installer in the chroot |
 | `archiso/` | Upstream archiso as a git submodule (currently **v88**) |
@@ -61,9 +62,17 @@ the whole trick, and the reason the feature costs so little: nothing branches on
 `user_configuration.json` and `user_credentials.json` are both required; anything
 less is not an autoinstall drive and `.automated_script.sh` falls back to the
 configurator. `user_full_name.txt`, `user_email_address.txt` and
-`authorized_keys` are optional there exactly as they are in the wizard. Attach
-one to the test VM with `MONARCH_VM_CIDATA=cidata.iso ./bin/monarch-iso-boot`;
-`README.md` has the `xorrisofs` recipe.
+`authorized_keys` are optional there exactly as they are in the wizard. Build one with
+`bin/monarch-iso-cidata` and attach it with `MONARCH_VM_CIDATA=cidata.iso
+./bin/monarch-iso-boot`.
+
+The helper does not carry its own copy of the schema: `write-install-config`
+holds the generation, and the configurator sources it too. That is the whole
+point of the split — omarchy-iso's equivalent lives in their test harness and has
+already drifted from their configurator. It also means the tests exercise the
+real generator rather than a slice of the wizard cut out with awk, which is what
+they did before. The wizard reads the disk size off the device and the helper
+takes it from `--size`; nothing else differs between them.
 
 ## SSH access
 
@@ -104,10 +113,9 @@ its mkinitcpio `HOOKS` carry `encrypt` either way (a no-op without a
 `cryptdevice=` cmdline) and `monarch-drive-password` already handles a machine
 with no LUKS volumes.
 
-`test/configurator-config-test.sh` lifts the file-generating tail out of the
-configurator and runs it against fake answers, because the wizard itself needs a
-TTY and a malformed heredoc is otherwise invisible until an install has already
-wiped a disk.
+`test/install-config-test.sh` runs `write-install-config` against fake answers,
+because the wizard itself needs a TTY and a malformed heredoc is otherwise
+invisible until an install has already wiped a disk.
 
 Encrypted machines only come up on the network once someone has typed the
 passphrase at the console: sshd starts after the root filesystem is unlocked.
@@ -129,7 +137,7 @@ Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's
 A full build takes a long time and downloads several GB. Before rebuilding, cheap checks that catch most mistakes:
 
 - `bash -n` on every script you touched
-- `bash test/prune-offline-mirror-test.sh`, `bash test/cidata-load-test.sh`, `bash test/configurator-config-test.sh` — the test suites here; each runs in a tempdir and needs no container
+- `bash test/prune-offline-mirror-test.sh`, `bash test/cidata-load-test.sh`, `bash test/install-config-test.sh` — the test suites here; each runs in a tempdir and needs no container
 - The configurator has a dry-run: `bash configs/airootfs/root/configurator dry` renders the TUI and prints the generated JSON without touching a disk (needs `gum` on the host)
 - `jq empty user_configuration.json` on that dry-run output — a malformed heredoc silently breaks the install otherwise
 
