@@ -5,6 +5,11 @@ set -euo pipefail
 # pulled before the Monarch installer and enabled after it.
 AUTHORIZED_KEYS=/root/authorized_keys
 
+# Set when an autoinstall drive stood in for the wizard. Passed into the chroot
+# so the Monarch installer skips the prompts nobody is there to answer — they
+# read the TTY and would hang the install forever.
+MONARCH_UNATTENDED=""
+
 use_monarch_helpers() {
   export MONARCH_PATH="/root/monarch"
   export MONARCH_INSTALL="/root/monarch/install"
@@ -19,6 +24,7 @@ run_configurator() {
   # runs the ordinary path against ordinary inputs.
   if /usr/local/bin/monarch-cidata-load; then
     echo "Autoinstall configuration found on the cidata drive; skipping the configurator."
+    MONARCH_UNATTENDED=1
   else
     ./configurator
   fi
@@ -281,6 +287,7 @@ chroot_bash() {
   HOME=/home/$MONARCH_USER \
     arch-chroot -u $MONARCH_USER /mnt/ \
     env MONARCH_CHROOT_INSTALL=1 \
+    MONARCH_UNATTENDED="$MONARCH_UNATTENDED" \
     MONARCH_USER_NAME="$(cat user_full_name.txt 2>/dev/null)" \
     MONARCH_USER_EMAIL="$(cat user_email_address.txt 2>/dev/null)" \
     USER="$MONARCH_USER" \
