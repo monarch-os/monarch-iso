@@ -209,9 +209,11 @@ More generally: when a symptom appears in a test VM, confirm it on real hardware
 
 # The Live Kernel
 
-The ISO boots **`linux-cachyos`** on every path — systemd-boot (`configs/efiboot/`), GRUB (`configs/grub/`) and syslinux. Keep them in sync when changing kernels; a mismatch is silent, because the archiso HOOKS live in the global drop-in `configs/airootfs/etc/mkinitcpio.conf.d/archiso.conf` and therefore apply to *any* kernel installed in the airootfs, so a stray second kernel still produces a bootable image.
+The ISO boots **`linux-cachyos`** on both paths it builds — syslinux for BIOS and GRUB (`configs/grub/`) for UEFI, per `bootmodes` in `configs/profiledef.sh`. releng uses systemd-boot for UEFI; Monarch does not, so `efiboot/loader/entries/` is read by nothing. Keep the two in sync when changing kernels; a mismatch is silent, because the archiso HOOKS live in the global drop-in `configs/airootfs/etc/mkinitcpio.conf.d/archiso.conf` and therefore apply to *any* kernel installed in the airootfs, so a stray second kernel still produces a bootable image.
 
 That is exactly how the fork carried Omarchy's `linux-t2` naming long after switching to CachyOS: releng's stock `linux` was still installed and its ~250 MB archiso initramfs shipped alongside the one nobody used. `builder/build-iso.sh` now strips `linux` and `broadcom-wl` from `packages.x86_64` — `broadcom-wl` is the only releng package that hard-depends on the stock kernel, so removing the kernel alone would let pacman drag it back in. Neither is useful: the install is fully offline and the live environment needs no Wi-Fi driver.
+
+releng's `airootfs/etc/mkinitcpio.d/linux.preset` goes in the same place. airootfs is laid down before pacstrap, so pacman's mkinitcpio hook runs `mkinitcpio -P` over it and errors on a kernel that is never installed — noise rather than breakage (pacman exits 0 on a failed hook), but it was printed on every build.
 
 # Releasing
 
