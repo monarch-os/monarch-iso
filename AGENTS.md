@@ -197,6 +197,8 @@ The ISO boots **`linux-cachyos`** on every path — systemd-boot (`configs/efibo
 
 That is exactly how the fork carried Omarchy's `linux-t2` naming long after switching to CachyOS: releng's stock `linux` was still installed and its ~250 MB archiso initramfs shipped alongside the one nobody used. `builder/build-iso.sh` now strips `linux` and `broadcom-wl` from `packages.x86_64` — `broadcom-wl` is the only releng package that hard-depends on the stock kernel, so removing the kernel alone would let pacman drag it back in. Neither is useful: the install is fully offline and the live environment needs no Wi-Fi driver.
 
+releng's `airootfs/etc/mkinitcpio.d/linux.preset` is dropped in the same place. mkarchiso copies `airootfs/` into the pacstrap directory *before* installing packages, so pacman's mkinitcpio hook — which switches to `mkinitcpio -P` as soon as a transaction touches anything but a kernel — runs every preset it finds there, including one whose `/boot/vmlinuz-linux` is never installed. That printed `ERROR: Invalid option -k` and `error: command failed to execute correctly` on every build. It was only noise: pacman exits 0 on a failed hook, and `mkinitcpio -P` runs the remaining presets, so the `linux-cachyos` initramfs was always built.
+
 # Releasing
 
 ```bash

@@ -89,6 +89,12 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 # same for its own kernel (omarchy-iso 0631c05).
 sed -i -E '/^(linux|broadcom-wl)$/d' "$build_cache_dir/packages.x86_64"
 
+# releng's preset for that kernel goes with it: mkarchiso lays airootfs down
+# before pacstrap, so pacman's mkinitcpio hook runs `mkinitcpio -P` over every
+# preset here and errors on the one whose kernel is never installed. The archiso
+# hooks reach linux-cachyos through the mkinitcpio.conf.d drop-in, not this file.
+rm "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux.preset"
+
 # Build list of all the packages needed for the offline mirror
 all_packages=($(cat "$build_cache_dir/packages.x86_64"))
 all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/monarch/install/monarch-base.packages" | grep -v '^$'))
