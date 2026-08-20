@@ -25,6 +25,7 @@ VM_MEMORY="${MONARCH_VM_MEMORY:-4096}"
 # therefore backed by RAM, cost gigabytes of it as it filled, and could never
 # grow past the tmpfs size regardless of what qemu-img was asked for. vm-saves/
 # is gitignored and on real storage.
+VM_SSH_PORT="${MONARCH_VM_SSH_PORT:-2222}"
 DISK="${MONARCH_VM_DISK:-$BOOT_ROOT/vm-saves/monarch-iso-boot.qcow2}"
 DISK_SIZE="${MONARCH_VM_DISK_SIZE:-30G}"
 OVMF_VARS="${DISK%.qcow2}-OVMF_VARS.4m.fd"
@@ -51,7 +52,8 @@ if [ -z "$ISO" ]; then
   echo "  reuse    Reuse existing disk image at $DISK"
   echo "  offline  Boot without any network interface (test offline install)"
   echo "  MONARCH_VM_CIDATA=cidata.iso attaches an autoinstall drive (see README)"
-  echo "  SSH available at: ssh -p 2222 root@localhost (after installing openssh, online mode only)"
+  echo "  SSH available at: ssh -p $VM_SSH_PORT root@localhost (online mode only)"
+  echo "  MONARCH_VM_SSH_PORT overrides that port, for a second VM alongside a running one"
   exit 1
 fi
 
@@ -73,7 +75,7 @@ if [ "$OFFLINE" = "offline" ]; then
   NET_ARGS=(-nic none)
 else
   NET_ARGS=(
-    -netdev user,id=net0,hostfwd=tcp::2222-:22
+    -netdev "user,id=net0,hostfwd=tcp::${VM_SSH_PORT}-:22"
     -device virtio-net-pci,netdev=net0
   )
 fi
