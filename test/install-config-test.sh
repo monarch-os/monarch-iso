@@ -73,6 +73,11 @@ assert "the user is still created" \
 assert "the git identity is written for the installer to pick up" \
   test "$(cat "$work/plain/user_full_name.txt")" = "Jeff Doe"
 
+# `iso` would copy the live medium's networkd files into the target and enable
+# them against NetworkManager, which owns the links.
+assert "archinstall is asked for NetworkManager, not the ISO's own config" \
+  jq_e '.network_config.type == "nm"' "$work/plain/user_configuration.json"
+
 echo "the partitions fit the disk they were sized for"
 read -r start size < <(jq -r '.disk_config.device_modifications[0].partitions[1]
   | "\(.start.value) \(.size.value)"' "$work/plain/user_configuration.json")
