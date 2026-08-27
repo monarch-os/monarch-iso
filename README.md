@@ -88,6 +88,13 @@ already know how to attach one.
 ./bin/monarch-iso-cidata --user y0no --key ~/.ssh/id_ed25519.pub
 ```
 
+To image a machine without creating an account, defer owner provisioning to
+the first boot:
+
+```bash
+./bin/monarch-iso-cidata --defer-provisioning
+```
+
 Writes `vm-saves/cidata.iso`. `--help` lists the rest: `--disk`, `--size`,
 `--hostname`, `--timezone`, `--keyboard`, `--encrypt`, `--password`, `-o`. The
 defaults describe a test VM — `/dev/vda`, 30G, unencrypted, this host's timezone

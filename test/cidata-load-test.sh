@@ -69,7 +69,7 @@ run_load() {
 }
 
 write_required_pair() {
-  echo '{"disk_config": {}}' >"$sandbox/media/user_configuration.json"
+  echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json"
   echo '{"users": [{"username": "jeff"}]}' >"$sandbox/media/user_credentials.json"
 }
 
@@ -118,7 +118,7 @@ assert "copies no optional file that is absent" test ! -e "$sandbox/root/user_fu
 echo "half the required pair is not an autoinstall drive"
 new_sandbox
 attach_drive cidata
-echo '{"disk_config": {}}' >"$sandbox/media/user_configuration.json"
+echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json"
 run_load
 assert "exits non-zero" test "$status" -ne 0
 assert "copies nothing" test ! -e "$sandbox/root/user_configuration.json"
@@ -145,7 +145,7 @@ assert "clears a full name the current drive does not carry" test ! -e "$sandbox
 echo "stale inputs are cleared even when falling back to the wizard"
 new_sandbox
 attach_drive cidata
-echo '{"disk_config": {}}' >"$sandbox/media/user_configuration.json" # half a pair
+echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json" # half a pair
 echo 'old-keys' >"$sandbox/root/authorized_keys"
 run_load
 assert "exits non-zero" test "$status" -ne 0

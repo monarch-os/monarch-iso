@@ -96,7 +96,7 @@ run_helper() {
 echo "the helper refuses what would produce an unusable drive"
 run_helper --key /dev/null
 assert "no --user is refused" test "$status" -ne 0
-assert "and says so" grep -q -- "--user is required" <<<"$out"
+assert "and says so" grep -q -- "--user or --defer-provisioning is required" <<<"$out"
 
 run_helper --user "Not A User" --key /dev/null
 assert "an invalid username is refused" test "$status" -ne 0
@@ -130,6 +130,25 @@ assert "the flags reached the configuration" \
 assert "the size flag reached the partition table" \
   jq_e '[.disk_config.device_modifications[0].partitions[].size.value] | add < (24 * 1024 * 1024 * 1024)' \
   "$work/extracted/user_configuration.json"
+
+echo "the helper builds a userless deferred-provisioning drive"
+rm -rf "$work/extracted"
+mkdir -p "$work/extracted"
+run_helper --defer-provisioning --size 24G --hostname handoff \
+  --timezone UTC --keyboard us --encrypt -o "$work/deferred.iso"
+assert "deferred provisioning succeeds without a user or SSH key" test "$status" -eq 0
+xorriso -osirrox on -indev "$work/deferred.iso" -extract / "$work/extracted" >/dev/null 2>&1
+assert "the marker replaces credentials" test -f "$work/extracted/defer-provisioning"
+assert "no deployment credentials are shipped" test ! -e "$work/extracted/user_credentials.json"
+assert "no SSH key is required" test ! -e "$work/extracted/authorized_keys"
+assert "the Monarch contract defers owner creation" \
+  jq_e '.monarch_install.defer_provisioning == true' "$work/extracted/user_configuration.json"
+assert "encrypted handoff carries no deployment passphrase" \
+  jq_e '.disk_config.disk_encryption | has("encryption_password") | not' \
+  "$work/extracted/user_configuration.json"
+
+run_helper --user jeff --defer-provisioning --key "$work/id.pub"
+assert "a user cannot also be deferred" test "$status" -ne 0
 
 echo
 if ((failures > 0)); then

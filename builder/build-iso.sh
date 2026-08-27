@@ -11,8 +11,8 @@ pacman-key --init
 # verify them at -Syw download time. The [monarch] repo is defined in
 # /configs/pacman-online.conf with SigLevel = Optional TrustAll.
 pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
-pacman --noconfirm -Syu archiso git sudo base-devel jq grub python-pip
-pacman-key --populate
+pacman-key --populate archlinux cachyos monarch
+pacman --config /configs/pacman-online.conf --noconfirm -Syu archiso git sudo base-devel jq grub python-pip
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -32,23 +32,78 @@ rm -rf "$build_cache_dir/airootfs/etc/systemd/system/multi-user.target.wants/ref
 rm -rf "$build_cache_dir/airootfs/etc/systemd/system/reflector.service.d"
 rm -rf "$build_cache_dir/airootfs/etc/xdg/reflector"
 
+# Monarch consumes NoCloud-style cidata with monarch-cidata-load; cloud-init is
+# not part of that path. releng enables it on the live system, where its late
+# tty1 status output corrupts the full-screen installer dashboard and delays
+# startup while it probes for a datasource that Monarch never uses.
+rm -rf "$build_cache_dir/airootfs/etc/systemd/system/cloud-init.target.wants"
+
 # Bring in our configs
 cp -r /configs/* $build_cache_dir/
-
-# Setup Monarch itself
-if [[ -d /monarch ]]; then
-  cp -rp /monarch "$build_cache_dir/airootfs/root/monarch"
-else
-  git clone --recurse-submodules -j8 -b $MONARCH_INSTALLER_REF $MONARCH_INSTALLER_REPO "$build_cache_dir/airootfs/root/monarch"
+printf '%s\n' "${MONARCH_INSTALLER_REF:-dev}" >"$build_cache_dir/airootfs/root/monarch_iso_ref"
+if [[ ${MONARCH_INSTALL_DEBUG:-} == 1 ]]; then
+  touch "$build_cache_dir/airootfs/usr/share/monarch-iso/install-debug"
 fi
 
-# Make log uploader available in the ISO too
-mkdir -p "$build_cache_dir/airootfs/usr/local/bin/"
-cp "$build_cache_dir/airootfs/root/monarch/bin/monarch-upload-log" "$build_cache_dir/airootfs/usr/local/bin/monarch-upload-log"
+# Build the runtime and settings packages from the two mounted checkouts in
+# local-source builds. Normal builds bootstrap the published pair below.
+local_monarch_build=""
+if [[ -d /monarch-source && -d /monarch-pkgs ]]; then
+  bash /builder/build-monarch-package.sh "$offline_mirror_dir"
+  local_monarch_build=1
+fi
 
-# Copy the Monarch Plymouth theme to the ISO
-mkdir -p "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch"
-cp -r "$build_cache_dir/airootfs/root/monarch/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch/"
+bootstrap_dir=/tmp/monarch-runtime-bootstrap
+runtime_root=/tmp/monarch-runtime-root
+rm -rf "$bootstrap_dir" "$runtime_root" /tmp/offlinedb-bootstrap
+mkdir -p "$bootstrap_dir" "$runtime_root" /tmp/offlinedb-bootstrap
+
+find_exact_package() {
+  local package_dir=$1 package_name=$2 candidate
+
+  while IFS= read -r candidate; do
+    if [[ $(bash /builder/package-name.sh "$candidate" 2>/dev/null) == "$package_name" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$package_dir" -maxdepth 1 -type f -name '*.pkg.tar.*' -print)
+
+  return 1
+}
+
+if [[ -n $local_monarch_build ]]; then
+  runtime_package=$(find_exact_package "$offline_mirror_dir" monarch || true)
+  settings_package=$(find_exact_package "$offline_mirror_dir" monarch-settings || true)
+else
+  pacman --config /configs/pacman-online.conf --noconfirm -Syw monarch monarch-settings \
+    --cachedir "$bootstrap_dir" --dbpath /tmp/offlinedb-bootstrap >/dev/null
+  runtime_package=$(find_exact_package "$bootstrap_dir" monarch || true)
+  settings_package=$(find_exact_package "$bootstrap_dir" monarch-settings || true)
+fi
+[[ -n $runtime_package ]] || { echo "ERROR: Monarch runtime package not found" >&2; exit 1; }
+[[ -n $settings_package ]] || { echo "ERROR: Monarch settings package not found" >&2; exit 1; }
+bsdtar -xf "$runtime_package" -C "$runtime_root"
+bsdtar -xf "$settings_package" -C "$runtime_root"
+
+runtime_share="$runtime_root/usr/share/monarch"
+for required in install/monarch-base.packages install/monarch-other.packages \
+  install/python.packages install/provisioning/setup-form.sh logo.txt; do
+  [[ -f $runtime_share/$required ]] || {
+    echo "ERROR: monarch package does not ship /usr/share/monarch/$required" >&2
+    exit 1
+  }
+done
+
+mkdir -p "$build_cache_dir/airootfs/usr/share/monarch-iso" \
+  "$build_cache_dir/airootfs/usr/share/monarch" \
+  "$build_cache_dir/airootfs/usr/local/bin" \
+  "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch"
+cp "$runtime_share/install/monarch-base.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
+cp "$runtime_share/install/monarch-other.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
+cp "$runtime_share/install/provisioning/setup-form.sh" "$build_cache_dir/airootfs/usr/share/monarch-iso/setup-form.sh"
+cp "$runtime_share/logo.txt" "$build_cache_dir/airootfs/usr/share/monarch/logo.txt"
+cp "$runtime_share/bin/monarch-upload-log" "$build_cache_dir/airootfs/usr/local/bin/monarch-upload-log"
+cp -r "$runtime_share/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch/"
 
 # Download and verify Node.js binary for offline installation
 NODE_DIST_URL="https://nodejs.org/dist/latest"
@@ -85,19 +140,29 @@ printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 # kernel we boot, so it has done nothing since we started booting linux-cachyos.
 # The install is entirely offline and the live environment needs no Wi-Fi driver.
 #
-# Anchored so linux-cachyos and linux-firmware are untouched. Upstream does the
-# same for its own kernel (omarchy-iso 0631c05).
-sed -i -E '/^(linux|broadcom-wl)$/d' "$build_cache_dir/packages.x86_64"
+# cloud-init is also inherited from releng, but Monarch's cidata loader replaces
+# its only relevant job. Anchored so linux-cachyos and linux-firmware remain.
+# Upstream removes its unused stock kernel with the same mechanism.
+sed -i -E '/^(linux|broadcom-wl|cloud-init)$/d' "$build_cache_dir/packages.x86_64"
 
 # Its preset goes too: pacman's mkinitcpio hook runs `mkinitcpio -P` over every
 # preset in the airootfs, and this one's kernel never arrives to build from.
 rm "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux.preset"
 
-# Build list of all the packages needed for the offline mirror
-all_packages=($(cat "$build_cache_dir/packages.x86_64"))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/monarch/install/monarch-base.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/monarch/install/monarch-other.packages" | grep -v '^$'))
-all_packages+=($(grep -v '^#' /builder/archinstall.packages | grep -v '^$'))
+# Build list of all packages needed for the live system and target transaction.
+mapfile -t all_packages < <(
+  {
+    cat "$build_cache_dir/packages.x86_64"
+    grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-base.packages"
+    grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-other.packages"
+    grep -hv '^#\|^$' /builder/archinstall.packages
+    printf '%s\n' monarch monarch-settings
+  } | sort -u
+)
+
+if [[ -n $local_monarch_build ]]; then
+  mapfile -t all_packages < <(printf '%s\n' "${all_packages[@]}" | grep -Fxv -e monarch -e monarch-settings)
+fi
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
@@ -132,7 +197,13 @@ if ! resolved_package_files="$(
   exit 1
 fi
 
-printf '%s\n' "$resolved_package_files" |
+mapfile -t required_package_files <<<"$resolved_package_files"
+if [[ -n $local_monarch_build ]]; then
+  required_package_files+=("${runtime_package##*/}")
+  required_package_files+=("${settings_package##*/}")
+fi
+
+printf '%s\n' "${required_package_files[@]}" |
   bash /builder/prune-offline-mirror.sh "$offline_mirror_dir"
 
 # Rebuild the index from scratch rather than adding to it. With several versions
@@ -142,6 +213,31 @@ printf '%s\n' "$resolved_package_files" |
 # and checksums in step with the files actually shipped.
 rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
 repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
+
+# Record the resolved target transaction for the dashboard and post-install
+# diagnostics. archinstall.packages feeds the live/offline installer and must
+# not be counted as target state: several entries are hardware-conditional or
+# live-only, and tailscale is installed only when cidata supplies an auth key.
+mapfile -t target_packages < <(
+  {
+    grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-base.packages"
+    grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-other.packages"
+    printf '%s\n' monarch-keyring monarch monarch-settings
+  } | sort -u
+)
+if [[ -n $local_monarch_build ]]; then
+  mapfile -t target_packages < <(
+    printf '%s\n' "${target_packages[@]}" | grep -Fxv -e monarch -e monarch-settings
+  )
+fi
+expected_packages=$(
+  pacman --config /configs/pacman-online.conf --noconfirm --dbpath /tmp/offlinedb \
+    -S --print --print-format '%n' "${target_packages[@]}" | sort -u | wc -l
+)
+if [[ -n $local_monarch_build ]]; then
+  ((expected_packages += 2))
+fi
+printf '%s\n' "$expected_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages"
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/monarch/mirror/offline in the container,
@@ -155,7 +251,7 @@ cp $build_cache_dir/pacman-offline.conf "$build_cache_dir/airootfs/etc/pacman.co
 
 # Install python packages
 python_packages=(pip) # Always install pip to the offline python directory as it's needed by pipx
-python_packages+=($(grep -v '^#' "$build_cache_dir/airootfs/root/monarch/install/python.packages" | grep -v '^$'))
+python_packages+=($(grep -v '^#' "$runtime_share/install/python.packages" | grep -v '^$'))
 pip download -d $offline_python_dir "${python_packages[@]}"
 
 # Finally, we assemble the entire ISO
