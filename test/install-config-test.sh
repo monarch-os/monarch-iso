@@ -72,6 +72,8 @@ assert "the user is still created" \
   jq_e '.users[0].username == "jeff"' "$work/plain/user_credentials.json"
 assert "the git identity is written for the installer to pick up" \
   test "$(cat "$work/plain/user_full_name.txt")" = "Jeff Doe"
+assert "preinstalls remain enabled by default" \
+  jq_e '.monarch_install.include_preinstalls == true' "$work/plain/user_configuration.json"
 
 # `iso` would copy the live medium's networkd files into the target and enable
 # them against NetworkManager, which owns the links.
@@ -115,7 +117,7 @@ assert "an unreadable size is refused" test "$status" -ne 0
 
 echo "the helper builds a drive the loader will recognise"
 run_helper --user jeff --key "$work/id.pub" --size 24G --hostname box \
-  --timezone UTC --keyboard us -o "$work/cidata.iso"
+  --timezone UTC --keyboard us --no-preinstalls -o "$work/cidata.iso"
 assert "it succeeds" test "$status" -eq 0
 assert "the volume is labelled cidata" \
   bash -c "xorriso -indev '$work/cidata.iso' -pvd_info 2>/dev/null | grep -qi \"Volume Id *: cidata\""
@@ -125,7 +127,8 @@ for file in user_configuration.json user_credentials.json authorized_keys; do
   assert "the drive carries $file" test -f "$work/extracted/$file"
 done
 assert "the flags reached the configuration" \
-  jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"' \
+  jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"
+    and .monarch_install.include_preinstalls == false' \
   "$work/extracted/user_configuration.json"
 assert "the size flag reached the partition table" \
   jq_e '[.disk_config.device_modifications[0].partitions[].size.value] | add < (24 * 1024 * 1024 * 1024)' \

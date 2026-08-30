@@ -144,6 +144,10 @@ class InstallContext:
     def is_protected(self) -> bool:
         return self.mode == "protected"
 
+    @property
+    def include_preinstalls(self) -> bool:
+        return self.monarch_install.get("include_preinstalls", True) is not False
+
 
 def _strip_account_fields(arch_configuration: dict) -> None:
     """Remove every field archinstall reads to create users or set a root

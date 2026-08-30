@@ -90,7 +90,10 @@ def _installed_package_count(target: Path) -> int:
 
 
 def _expected_package_count(ctx: InstallContext | None = None) -> int:
-    path = Path("/usr/share/monarch-iso/expected-packages")
+    filename = "expected-packages"
+    if ctx is not None and not ctx.include_preinstalls:
+        filename = "expected-packages-minimal"
+    path = Path("/usr/share/monarch-iso") / filename
     try:
         count = int(path.read_text().split()[0])
         # Tailscale is present in the offline mirror but intentionally absent
