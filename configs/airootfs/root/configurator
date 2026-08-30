@@ -252,6 +252,19 @@ confirm_prepare_for_another_owner() {
     "Prepare this machine for another owner?"
 }
 
+preinstalls_form() {
+  local choice
+
+  step "Choose the software profile..."
+  say "The minimal profile keeps the Monarch desktop and leaves out optional"
+  say "applications, web apps, terminal wrappers, and security tools."
+  echo
+  choice=$(gum choose --cursor.foreground "$ACCENT" \
+    "Full Monarch experience (recommended)" \
+    "Minimal Monarch system") || abort
+  [[ $choice == "Minimal Monarch system" ]] && include_preinstalls=false || include_preinstalls=true
+}
+
 # The user step. Deferred-provisioning installs skip it entirely — the machine's first owner
 # picks their keyboard and creates their user in the first-boot setup, so the
 # operator sets nothing user-specific.
@@ -797,6 +810,7 @@ run_partition_execute() {
         "schema_version": 1,
         "mode": "protected",
         "defer_provisioning": false,
+        "include_preinstalls": $include_preinstalls,
         "target_mount": "/mnt",
         "boot": {
             "esp_mount": "$esp_mount_in_target",
@@ -1032,6 +1046,7 @@ select_installation() {
 # STEP 1: KEYBOARD (Ctrl+C here arms deferred provisioning and jumps to disk selection)
 
 defer_provisioning=false
+include_preinstalls=true
 install_target="full_disk"
 
 # Let the live VT reach its settled width before the first screen so the logo
@@ -1067,12 +1082,14 @@ if $defer_provisioning; then
 
   # Jump straight to disk selection + overwrite confirmation (encrypted by
   # default, Ctrl+C toggles unencrypted). deferred provisioning is always a full-disk install.
+  preinstalls_form
   disk_form
   until confirm_disk_overwrite; do
     disk_form
   done
   install_target="full_disk"
 else
+  preinstalls_form
   disk_form
   select_installation
 fi
@@ -1140,6 +1157,7 @@ cat <<-_EOF_ >user_configuration.json
         "schema_version": 1,
         "mode": "full_disk",
         "defer_provisioning": $defer_provisioning,
+        "include_preinstalls": $include_preinstalls,
         "target_mount": "/mnt",
         "boot": {
             "esp_mount": "/boot",

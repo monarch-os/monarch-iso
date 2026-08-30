@@ -3,6 +3,7 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+monarch_root=${MONARCH_PATH:-$root/../monarch}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -14,7 +15,7 @@ EOF
 chmod +x "$tmp/bin/noctalia"
 
 NOCTALIA_CALLS="$tmp/calls" PATH="$tmp/bin:/usr/bin" \
-  bash "$root/../monarch/install/user/first-run/enable-noctalia-plugins.sh"
+  bash "$monarch_root/install/user/first-run/enable-noctalia-plugins.sh"
 
 for plugin_id in monarch/indicators monarch/agents monarch/menu monarch/wifi-qr monarch/network monarch/display; do
   grep -qxF "msg plugins enable $plugin_id" "$tmp/calls"

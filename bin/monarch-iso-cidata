@@ -16,6 +16,7 @@ TIMEZONE=""
 KEYBOARD=""
 ENCRYPT=false
 DEFER_PROVISIONING=false
+INCLUDE_PREINSTALLS=true
 FULL_NAME=""
 EMAIL=""
 OUTPUT="$BUILD_ROOT/vm-saves/cidata.iso"
@@ -35,6 +36,7 @@ Usage: monarch-iso-cidata (--user NAME | --defer-provisioning) [options]
   --timezone TZ      (default: this host's)
   --keyboard LAYOUT  (default: this host's)
   --encrypt          Encrypt the root partition (default: no)
+  --no-preinstalls   Install only the Monarch core system
   --full-name NAME   Git identity (default: git config user.name)
   --email ADDRESS    Git identity (default: git config user.email)
   -o, --output FILE  (default: $OUTPUT)
@@ -56,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --timezone) TIMEZONE="$2"; shift 2 ;;
     --keyboard) KEYBOARD="$2"; shift 2 ;;
     --encrypt) ENCRYPT=true; shift ;;
+    --no-preinstalls) INCLUDE_PREINSTALLS=false; shift ;;
     --full-name) FULL_NAME="$2"; shift 2 ;;
     --email) EMAIL="$2"; shift 2 ;;
     -o | --output) OUTPUT="$2"; shift 2 ;;
@@ -131,6 +134,7 @@ trap 'rm -rf "$staging"' EXIT
   keyboard="$KEYBOARD"
   encrypt_installation="$ENCRYPT"
   defer_provisioning="$DEFER_PROVISIONING"
+  include_preinstalls="$INCLUDE_PREINSTALLS"
 
   source "$BUILD_ROOT/configs/airootfs/root/write-install-config"
 )
@@ -157,6 +161,7 @@ else
   echo "  user       $USERNAME on $DISK ($DISK_SIZE), $HOSTNAME_, $TIMEZONE, $KEYBOARD"
 fi
 echo "  encryption $([[ $ENCRYPT == true ]] && echo "yes" || echo "no")"
+echo "  preinstalls $([[ $INCLUDE_PREINSTALLS == true ]] && echo "yes" || echo "no")"
 if [[ -n $KEY_FILE ]]; then
   echo "  keys       $(wc -l <"$staging/authorized_keys") from $KEY_FILE"
 else

@@ -87,6 +87,7 @@ bsdtar -xf "$settings_package" -C "$runtime_root"
 
 runtime_share="$runtime_root/usr/share/monarch"
 for required in install/monarch-base.packages install/monarch-other.packages \
+  install/monarch-preinstalls.packages \
   install/python.packages install/provisioning/setup-form.sh logo.txt; do
   [[ -f $runtime_share/$required ]] || {
     echo "ERROR: monarch package does not ship /usr/share/monarch/$required" >&2
@@ -100,6 +101,7 @@ mkdir -p "$build_cache_dir/airootfs/usr/share/monarch-iso" \
   "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch"
 cp "$runtime_share/install/monarch-base.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/monarch-other.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
+cp "$runtime_share/install/monarch-preinstalls.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/provisioning/setup-form.sh" "$build_cache_dir/airootfs/usr/share/monarch-iso/setup-form.sh"
 cp "$runtime_share/logo.txt" "$build_cache_dir/airootfs/usr/share/monarch/logo.txt"
 cp "$runtime_share/bin/monarch-upload-log" "$build_cache_dir/airootfs/usr/local/bin/monarch-upload-log"
@@ -238,6 +240,19 @@ if [[ -n $local_monarch_build ]]; then
   ((expected_packages += 2))
 fi
 printf '%s\n' "$expected_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages"
+
+mapfile -t minimal_target_packages < <(
+  printf '%s\n' "${target_packages[@]}" |
+    grep -Fvx -f "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-preinstalls.packages"
+)
+expected_minimal_packages=$(
+  pacman --config /configs/pacman-online.conf --noconfirm --dbpath /tmp/offlinedb \
+    -S --print --print-format '%n' "${minimal_target_packages[@]}" | sort -u | wc -l
+)
+if [[ -n $local_monarch_build ]]; then
+  ((expected_minimal_packages += 2))
+fi
+printf '%s\n' "$expected_minimal_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages-minimal"
 
 # Create a symlink to the offline mirror instead of duplicating it.
 # mkarchiso needs packages at /var/cache/monarch/mirror/offline in the container,

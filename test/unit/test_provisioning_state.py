@@ -90,6 +90,18 @@ class ContextDeferProvisioningTest(unittest.TestCase):
         self.assertFalse(ctx.defer_provisioning)
         self.assertEqual(ctx.username, "jeff")
 
+    def test_preinstalls_default_to_included(self):
+        self.write_config(self.base_config())
+        self.write_creds({"users": [{"username": "jeff"}]})
+        self.assertTrue(self.from_env().include_preinstalls)
+
+    def test_minimal_profile_excludes_preinstalls(self):
+        config = self.base_config()
+        config["monarch_install"]["include_preinstalls"] = False
+        self.write_config(config)
+        self.write_creds({"users": [{"username": "jeff"}]})
+        self.assertFalse(self.from_env().include_preinstalls)
+
     def test_missing_credentials_without_defer_provisioning_raises(self):
         self.write_config(self.base_config())
         with self.assertRaisesRegex(RuntimeError, "credentials file missing"):
@@ -172,6 +184,7 @@ def make_ctx(target, **overrides):
         user_credentials={"users": []},
         state_dir=target / "state",
         authorized_keys_path=None,
+        include_preinstalls=True,
     )
     defaults.update(overrides)
     return types.SimpleNamespace(**defaults)
@@ -217,6 +230,11 @@ class StageProvisioningStateTest(unittest.TestCase):
         self.assertTrue((self.provisioning_dir() / "packages/node-v24.0.0-linux-x64.tar.gz").exists())
         self.assertFalse((self.provisioning_dir() / "pending").exists())
         self.assertFalse((self.target / "etc/systemd/system/monarch-provision-owner.service").exists())
+
+    def test_minimal_profile_is_staged_for_future_owner_provisioning(self):
+        ctx = make_ctx(self.target, defer_provisioning=False, include_preinstalls=False)
+        phases_impl.stage_provisioning_state(ctx)
+        self.assertTrue((self.provisioning_dir() / "skip-preinstalls").exists())
 
     def test_deferred_provisioning_against_runtime_without_support_fails_clearly(self):
         ctx = make_ctx(self.target)

@@ -676,12 +676,19 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
         "monarch",
         "monarch-settings",
     }
+    excluded = set()
+    if not ctx.include_preinstalls:
+        excluded = {
+            line.strip()
+            for line in (Path("/usr/share/monarch-iso") / "monarch-preinstalls.packages").read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
     for package_list in ("monarch-base.packages", "monarch-other.packages"):
         for raw in (Path("/usr/share/monarch-iso") / package_list).read_text().splitlines():
             s = raw.strip()
             if not s or s.startswith("#"):
                 continue
-            if s not in already_installed and s not in pkgs:
+            if s not in already_installed and s not in excluded and s not in pkgs:
                 pkgs.append(s)
     return pkgs
 
@@ -1123,6 +1130,12 @@ def stage_provisioning_state(ctx: InstallContext) -> None:
 
     _stage_node_tarball(ctx, provisioning_dir)
 
+    skip_preinstalls = provisioning_dir / "skip-preinstalls"
+    if ctx.include_preinstalls:
+        skip_preinstalls.unlink(missing_ok=True)
+    else:
+        skip_preinstalls.touch()
+
     if not ctx.defer_provisioning:
         return
 
@@ -1315,11 +1328,10 @@ def run_chroot_finalizer(ctx: InstallContext) -> None:
         info("› deferred-provisioning install: user finalization deferred to first boot")
         return
 
-    _run_target_setup_command(
-        ctx,
-        ["/usr/bin/monarch-provision-user", "--force", "--first-install"],
-        user=ctx.username,
-    )
+    cmd = ["/usr/bin/monarch-provision-user", "--force", "--first-install"]
+    if not ctx.include_preinstalls:
+        cmd.append("--skip-preinstalls")
+    _run_target_setup_command(ctx, cmd, user=ctx.username)
 
 
 def configure_dns_resolver(ctx: InstallContext) -> None:

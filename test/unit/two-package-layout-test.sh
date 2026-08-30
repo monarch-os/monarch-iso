@@ -3,15 +3,17 @@
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-runtime_pkgbuild="$root/../monarch-pkgs/pkgbuilds/monarch/PKGBUILD"
-settings_pkgbuild="$root/../monarch-pkgs/pkgbuilds/monarch-settings/PKGBUILD"
+monarch_root=${MONARCH_PATH:-$root/../monarch}
+monarch_pkgs_root=${MONARCH_PKGS_PATH:-$root/../monarch-pkgs}
+runtime_pkgbuild="$monarch_pkgs_root/pkgbuilds/monarch/PKGBUILD"
+settings_pkgbuild="$monarch_pkgs_root/pkgbuilds/monarch-settings/PKGBUILD"
 
 [[ -f $runtime_pkgbuild ]]
 [[ -f $settings_pkgbuild ]]
 
 grep -qF '"monarch-settings=${pkgver}"' "$runtime_pkgbuild"
 
-noctalia_package=$(sed -n '/^noctalia/p' "$root/../monarch/install/monarch-base.packages")
+noctalia_package=$(sed -n '/^noctalia/p' "$monarch_root/install/monarch-base.packages")
 [[ -n $noctalia_package ]]
 grep -qF "'$noctalia_package'" "$runtime_pkgbuild" || {
   echo "runtime dependency does not match offline Noctalia package: $noctalia_package" >&2
@@ -28,10 +30,10 @@ if grep -qF -- '--no-preserve=ownership' "$runtime_pkgbuild" "$settings_pkgbuild
   exit 1
 fi
 
-[[ -x $root/../monarch/bin/monarch-dns ]]
-[[ -f $root/../monarch/etc/sudoers.d/monarch-dns ]]
-[[ ! -d $root/../monarch-pkgs/pkgbuilds/monarch-dns ]]
-! grep -qxF monarch-dns "$root/../monarch/install/monarch-base.packages"
+[[ -x $monarch_root/bin/monarch-dns ]]
+[[ -f $monarch_root/etc/sudoers.d/monarch-dns ]]
+[[ ! -d $monarch_pkgs_root/pkgbuilds/monarch-dns ]]
+! grep -qxF monarch-dns "$monarch_root/install/monarch-base.packages"
 if grep -qE "^(provides|conflicts|replaces)=\('monarch-dns'\)" "$runtime_pkgbuild"; then
   echo "runtime still carries compatibility metadata for retired monarch-dns" >&2
   exit 1
@@ -48,10 +50,10 @@ if grep -qF '/builder/archinstall.packages' <<<"$target_block"; then
   exit 1
 fi
 
-if grep -qE 'install/(preflight|packaging)|helpers/all\.sh' "$root/../monarch/install.sh"; then
+if grep -qE 'install/(preflight|packaging)|helpers/all\.sh' "$monarch_root/install.sh"; then
   echo "install.sh still invokes the retired installer pipeline" >&2
   exit 1
 fi
-grep -qF 'exec monarch-apply-system "$@"' "$root/../monarch/install.sh"
+grep -qF 'exec monarch-apply-system "$@"' "$monarch_root/install.sh"
 
 echo "ok - Monarch runtime and settings are built and counted as two packages"

@@ -5,9 +5,10 @@
 #
 # Expects: disk disk_size username password password_hash full_name
 #          email_address hostname timezone keyboard encrypt_installation
-# Optional: defer_provisioning (default: false)
+# Optional: defer_provisioning, include_preinstalls (defaults: false, true)
 
 defer_provisioning=${defer_provisioning:-false}
+include_preinstalls=${include_preinstalls:-true}
 
 # Save user full name and email address, so the autostart can
 # set them as MONARCH_USER_NAME and MONARCH_USER_EMAIL
@@ -89,6 +90,7 @@ cat <<-_EOF_ >user_configuration.json
         "mode": "full_disk",
         "target_mount": "/mnt",
         "defer_provisioning": $defer_provisioning,
+        "include_preinstalls": $include_preinstalls,
         "boot": {},
         "storage": {}
     },
