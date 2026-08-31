@@ -83,4 +83,8 @@ file_permissions=(
   ["/var/cache/monarch/mirror/offline/"]="0:0:775"
   ["/usr/local/bin/monarch-upload-log"]="0:0:755"
   ["/usr/local/bin/monarch-cidata-load"]="0:0:755"
+  ["/usr/local/bin/monarch-iso-install"]="0:0:755"
+  ["/usr/local/bin/monarch-iso-cleanup-disk"]="0:0:755"
+  ["/usr/local/bin/monarch-install-dashboard"]="0:0:755"
+  ["/usr/local/bin/monarch-install-diagnose-media"]="0:0:755"
 )

@@ -1,0 +1,28 @@
+# Unconditional target packages installed outside monarch-base.packages.
+# Keep this aligned with archinstall's minimal/zram/application transactions
+# and phases_impl.py's ordered early-package transactions. Hardware-conditional
+# and live-only packages belong in archinstall.packages, not here.
+
+base
+sudo
+linux-firmware
+mkinitcpio
+linux-cachyos
+btrfs-progs
+zram-generator
+base-devel
+git
+limine
+efibootmgr
+monarch-keyring
+monarch-settings
+monarch
+lua51
+luarocks
+pipewire
+pipewire-alsa
+pipewire-jack
+pipewire-pulse
+gst-plugin-pipewire
+libpulse
+wireplumber

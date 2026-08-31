@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+# Stop the VM a `monarch-iso-test --keep-running` run left behind: graceful
+# guest poweroff over SSH first, escalating to TERM then KILL. The base image
+# is untouched; only the throwaway run overlay is affected.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+
+GUEST_USER="monarch"
+GUEST_PASSWORD="monarch"
+SSH_PORT=2222
+GRACEFUL=true
+
+usage() {
+  echo "Usage: monarch-iso-test-stop [--kill] [--port PORT]"
+  echo "  --kill       Skip graceful shutdown and kill the VM immediately"
+  echo "  --port PORT  Host port forwarded to guest SSH (default: 2222)"
+}
+
+while (($#)); do
+  case "$1" in
+    --kill) GRACEFUL=false ;;
+    --port)
+      [[ ${2:-} =~ ^[0-9]+$ ]] || { echo "--port requires a port number" >&2; exit 1; }
+      SSH_PORT="$2"
+      shift
+      ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
+  esac
+  shift
+done
+
+PID=""
+PIDFILE=""
+
+is_test_vm() {
+  local pid="$1" pidfile="$2" cmdline
+  [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  [[ -r /proc/$pid/cmdline ]] || return 1
+  cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline")
+  [[ $cmdline == *qemu-system-x86_64* && $cmdline == *"-pidfile $pidfile"* ]]
+}
+
+while IFS= read -r candidate; do
+  pid=$(<"$candidate")
+  if is_test_vm "$pid" "$candidate"; then
+    PID="$pid"
+    PIDFILE="$candidate"
+    break
+  fi
+done < <(find "$REPO_DIR/test-runs" -path '*/runs/*/qemu.pid' -type f -printf '%T@ %p\n' 2>/dev/null |
+  sort -rn | cut -d' ' -f2-)
+
+if [[ -z $PID ]]; then
+  echo "No running monarch-iso-test VM found." >&2
+  exit 1
+fi
+
+BASE_DIR="$(dirname "$(dirname "$(dirname "$PIDFILE")")")"
+SSH_KEY="$BASE_DIR/id_ed25519"
+
+if [[ -t 0 ]]; then
+  if pgrep -f 'bin/monarch-iso-test .*\.iso' >/dev/null; then
+    echo "Warning: a monarch-iso-test run appears to be in progress."
+  fi
+  gum confirm "Stop test VM (pid $PID, ${PIDFILE#"$REPO_DIR"/})?" || exit 0
+fi
+
+echo "Stopping test VM (pid $PID, ${PIDFILE#"$REPO_DIR"/})"
+
+if $GRACEFUL && [[ -f $SSH_KEY ]]; then
+  ssh -i "$SSH_KEY" -p "$SSH_PORT" \
+    -o BatchMode=yes \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=5 \
+    -o LogLevel=ERROR \
+    "$GUEST_USER@127.0.0.1" \
+    "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1 || true
+
+  waited=0
+  while kill -0 "$PID" 2>/dev/null && ((waited < 15)); do
+    sleep 1
+    ((waited += 1))
+  done
+fi
+
+if is_test_vm "$PID" "$PIDFILE"; then
+  kill "$PID" 2>/dev/null || true
+  sleep 1
+fi
+
+if is_test_vm "$PID" "$PIDFILE"; then
+  kill -9 "$PID" 2>/dev/null || true
+  sleep 1
+fi
+
+if is_test_vm "$PID" "$PIDFILE"; then
+  echo "VM (pid $PID) refused to stop." >&2
+  exit 1
+fi
+
+echo "VM stopped; port $SSH_PORT is free."

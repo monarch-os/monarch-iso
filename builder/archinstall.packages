@@ -5,9 +5,14 @@ base-devel
 efibootmgr
 intel-ucode
 linux-firmware
+linux-cachyos
 limine
+lvm2
+cryptsetup
+parted
 monarch-keyring
 openssh
 pipewire
 snapper
+tailscale
 sof-firmware

@@ -15,15 +15,19 @@ HOSTNAME_="monarch"
 TIMEZONE=""
 KEYBOARD=""
 ENCRYPT=false
+DEFER_PROVISIONING=false
+INCLUDE_PREINSTALLS=true
 FULL_NAME=""
 EMAIL=""
 OUTPUT="$BUILD_ROOT/vm-saves/cidata.iso"
 
 usage() {
   cat <<EOF
-Usage: monarch-iso-cidata --user NAME [options]
+Usage: monarch-iso-cidata (--user NAME | --defer-provisioning) [options]
 
-  --user NAME        Account created by the install (required)
+  --user NAME        Account created by the install
+  --defer-provisioning
+                     Install without an account; create the owner at first boot
   --password PW      Account, root and LUKS password (default: $PASSWORD)
   --key FILE         SSH public keys, sshd's own format (default: ~/.ssh/id_ed25519.pub)
   --disk DEV         Install target inside the guest (default: $DISK)
@@ -32,6 +36,7 @@ Usage: monarch-iso-cidata --user NAME [options]
   --timezone TZ      (default: this host's)
   --keyboard LAYOUT  (default: this host's)
   --encrypt          Encrypt the root partition (default: no)
+  --no-preinstalls   Install only the Monarch core system
   --full-name NAME   Git identity (default: git config user.name)
   --email ADDRESS    Git identity (default: git config user.email)
   -o, --output FILE  (default: $OUTPUT)
@@ -44,6 +49,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case $1 in
     --user) USERNAME="$2"; shift 2 ;;
+    --defer-provisioning) DEFER_PROVISIONING=true; shift ;;
     --password) PASSWORD="$2"; shift 2 ;;
     --key) KEY_FILE="$2"; shift 2 ;;
     --disk) DISK="$2"; shift 2 ;;
@@ -52,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --timezone) TIMEZONE="$2"; shift 2 ;;
     --keyboard) KEYBOARD="$2"; shift 2 ;;
     --encrypt) ENCRYPT=true; shift ;;
+    --no-preinstalls) INCLUDE_PREINSTALLS=false; shift ;;
     --full-name) FULL_NAME="$2"; shift 2 ;;
     --email) EMAIL="$2"; shift 2 ;;
     -o | --output) OUTPUT="$2"; shift 2 ;;
@@ -60,13 +67,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z $USERNAME ]]; then
-  echo "monarch-iso-cidata: --user is required" >&2
+if [[ $DEFER_PROVISIONING == true && -n $USERNAME ]]; then
+  echo "monarch-iso-cidata: --user and --defer-provisioning are mutually exclusive" >&2
+  exit 1
+fi
+
+if [[ $DEFER_PROVISIONING != true && -z $USERNAME ]]; then
+  echo "monarch-iso-cidata: --user or --defer-provisioning is required" >&2
   usage >&2
   exit 1
 fi
 
-if ! [[ $USERNAME =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+if [[ -n $USERNAME ]] && ! [[ $USERNAME =~ ^[a-z_][a-z0-9_-]*$ ]]; then
   echo "monarch-iso-cidata: '$USERNAME' is not a valid username" >&2
   exit 1
 fi
@@ -76,15 +88,17 @@ command -v xorrisofs >/dev/null || {
   exit 1
 }
 
-[[ -n $KEY_FILE ]] || KEY_FILE="$HOME/.ssh/id_ed25519.pub"
-if [[ ! -f $KEY_FILE ]]; then
+if [[ -z $KEY_FILE && $DEFER_PROVISIONING != true ]]; then
+  KEY_FILE="$HOME/.ssh/id_ed25519.pub"
+fi
+if [[ -n $KEY_FILE && ! -f $KEY_FILE ]]; then
   echo "monarch-iso-cidata: no SSH key at $KEY_FILE (pass --key)" >&2
   exit 1
 fi
 
 # The installer fails an install rather than produce a machine nobody can reach;
 # fail here instead, where it costs nothing.
-if ! grep -qvE '^[[:space:]]*(#|$)' "$KEY_FILE"; then
+if [[ -n $KEY_FILE ]] && ! grep -qvE '^[[:space:]]*(#|$)' "$KEY_FILE"; then
   echo "monarch-iso-cidata: $KEY_FILE holds no usable key" >&2
   exit 1
 fi
@@ -119,22 +133,40 @@ trap 'rm -rf "$staging"' EXIT
   timezone="$TIMEZONE"
   keyboard="$KEYBOARD"
   encrypt_installation="$ENCRYPT"
+  defer_provisioning="$DEFER_PROVISIONING"
+  include_preinstalls="$INCLUDE_PREINSTALLS"
 
   source "$BUILD_ROOT/configs/airootfs/root/write-install-config"
 )
 
-grep -vE '^[[:space:]]*(#|$)' "$KEY_FILE" >"$staging/authorized_keys"
+if [[ $DEFER_PROVISIONING == true ]]; then
+  rm -f "$staging/user_credentials.json"
+  touch "$staging/defer-provisioning"
+fi
+
+if [[ -n $KEY_FILE ]]; then
+  grep -vE '^[[:space:]]*(#|$)' "$KEY_FILE" >"$staging/authorized_keys"
+fi
 
 jq empty "$staging/user_configuration.json"
-jq empty "$staging/user_credentials.json"
+[[ ! -f $staging/user_credentials.json ]] || jq empty "$staging/user_credentials.json"
 
 mkdir -p "${OUTPUT%/*}"
 xorrisofs -output "$OUTPUT" -volid cidata -joliet -rock "$staging" >/dev/null 2>&1
 
 echo "Wrote $OUTPUT"
-echo "  user       $USERNAME on $DISK ($DISK_SIZE), $HOSTNAME_, $TIMEZONE, $KEYBOARD"
+if [[ $DEFER_PROVISIONING == true ]]; then
+  echo "  user       deferred until first boot on $DISK ($DISK_SIZE), $HOSTNAME_, $TIMEZONE, $KEYBOARD"
+else
+  echo "  user       $USERNAME on $DISK ($DISK_SIZE), $HOSTNAME_, $TIMEZONE, $KEYBOARD"
+fi
 echo "  encryption $([[ $ENCRYPT == true ]] && echo "yes" || echo "no")"
-echo "  keys       $(wc -l <"$staging/authorized_keys") from $KEY_FILE"
+echo "  preinstalls $([[ $INCLUDE_PREINSTALLS == true ]] && echo "yes" || echo "no")"
+if [[ -n $KEY_FILE ]]; then
+  echo "  keys       $(wc -l <"$staging/authorized_keys") from $KEY_FILE"
+else
+  echo "  keys       deferred until owner provisioning"
+fi
 
 if [[ $ENCRYPT == true ]]; then
   echo

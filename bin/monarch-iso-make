@@ -6,6 +6,8 @@ set -e
 # Parse command line arguments
 NO_CACHE=""
 KEEP_PKG_CACHE=""
+LOCAL_MONARCH_PATH=""
+LOCAL_PKGS_PATH=""
 while [[ $# -gt 0 ]]; do
   case $1 in
   --no-cache)
@@ -21,8 +23,13 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
   --local-source)
-    LOCAL_SOURCE=1
-    shift
+    LOCAL_MONARCH_PATH="${2:-}"
+    LOCAL_PKGS_PATH="${3:-}"
+    if [[ -z $LOCAL_MONARCH_PATH || -z $LOCAL_PKGS_PATH ]]; then
+      echo "Error: --local-source requires <monarch-checkout> <monarch-pkgs-checkout>" >&2
+      exit 1
+    fi
+    shift 3
     ;;
   --dev)
     MONARCH_INSTALLER_REF=dev
@@ -30,7 +37,7 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--no-cache] [--keep-pkg-cache] [--no-boot-offer] [--local-source] [--dev]"
+    echo "Usage: $0 [--no-cache] [--keep-pkg-cache] [--no-boot-offer] [--local-source <monarch-checkout> <monarch-pkgs-checkout>] [--dev]"
     exit 1
     ;;
   esac
@@ -42,7 +49,7 @@ MONARCH_INSTALLER_REF="${MONARCH_INSTALLER_REF:-dev}"
 # Reject a bad ref here rather than inside the container. The clone happens
 # several minutes in — after the host pacman cache has been wiped and the build
 # packages installed — and its failure is buried in the build log.
-if [[ -z "${LOCAL_SOURCE-}" ]]; then
+if [[ -z $LOCAL_MONARCH_PATH ]]; then
   if ! git ls-remote --exit-code --heads --tags \
     "$MONARCH_INSTALLER_REPO" "$MONARCH_INSTALLER_REF" >/dev/null 2>&1; then
     echo "Branch or tag '$MONARCH_INSTALLER_REF' not found on $MONARCH_INSTALLER_REPO" >&2
@@ -51,6 +58,14 @@ if [[ -z "${LOCAL_SOURCE-}" ]]; then
       sed 's|.*refs/heads/|  |' >&2
     exit 1
   fi
+fi
+
+if [[ -n $LOCAL_MONARCH_PATH ]]; then
+  [[ -d $LOCAL_MONARCH_PATH ]] || { echo "Monarch checkout not found: $LOCAL_MONARCH_PATH" >&2; exit 1; }
+  [[ -d $LOCAL_PKGS_PATH ]] || { echo "monarch-pkgs checkout not found: $LOCAL_PKGS_PATH" >&2; exit 1; }
+  LOCAL_MONARCH_PATH=$(realpath "$LOCAL_MONARCH_PATH")
+  LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
+  MONARCH_LOCAL_PKGVER=$("${BASH_SOURCE[0]%/*}/../builder/source-package-version.sh" "$LOCAL_MONARCH_PATH")
 fi
 
 # Clear out old packages. This is the host's own pacman cache, not just the
@@ -70,7 +85,15 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
-BUILDER_CMD="${BUILDER_CMD:-docker}"
+read -r -a BUILDER <<<"${BUILDER_CMD:-docker}"
+
+# The docker group is root-equivalent, so builders may deliberately leave
+# their user out of it. Preserve explicit BUILDER_CMD overrides (podman,
+# wrappers, or sudo docker), but make the default work through sudo when the
+# Docker socket refuses the current user.
+if [[ ${#BUILDER[@]} == 1 && ${BUILDER[0]} == docker ]] && ! docker version &>/dev/null; then
+  BUILDER=(sudo docker)
+fi
 
 DOCKER_ARGS=(
   --rm
@@ -107,8 +130,12 @@ for var in MONARCH_ISO_SQUASHFS_PROCESSORS MONARCH_ISO_SQUASHFS_MEM MONARCH_ISO_
 done
 
 # Use local source of Monarch from $MONARCH_PATH instead of git checkout
-if [[ -n "${LOCAL_SOURCE-}" ]]; then
-  DOCKER_ARGS+=(-v "$MONARCH_PATH:/monarch:ro")
+if [[ -n $LOCAL_MONARCH_PATH ]]; then
+  DOCKER_ARGS+=(
+    -e "MONARCH_LOCAL_PKGVER=$MONARCH_LOCAL_PKGVER"
+    -v "$LOCAL_MONARCH_PATH:/monarch-source:ro"
+    -v "$LOCAL_PKGS_PATH:/monarch-pkgs:ro"
+  )
 fi
 
 # Use local pacman cache if you already have one on host to speed up repeat runs
@@ -136,7 +163,7 @@ else
 fi
 
 # Run the builder with assembled args
-${BUILDER_CMD} run "${DOCKER_ARGS[@]}" cachyos/cachyos:latest /$BUILD_SCRIPT
+"${BUILDER[@]}" run "${DOCKER_ARGS[@]}" cachyos/cachyos:latest /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)

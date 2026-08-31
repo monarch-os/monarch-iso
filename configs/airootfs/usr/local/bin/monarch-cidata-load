@@ -1,9 +1,21 @@
 #!/bin/bash
 #
-# Copy the configurator's output files off a cidata drive into /root. Exit 0
-# when that happened, so the caller can skip the wizard. See AGENTS.md.
+# Autoinstall: a drive labeled cidata (the cloud-init NoCloud label, so Proxmox,
+# libvirt and Packer all know how to attach one) carrying the configurator's own
+# output files stands in for the wizard. Copy those files into /root and
+# everything downstream runs the ordinary path against ordinary inputs.
 #
-# The optional argument prefixes every path touched, for the tests.
+# Exits 0 when an autoinstall drive was loaded and the configurator can be
+# skipped. The required pair is the same one the orchestrator treats as
+# mandatory; the rest are optional there too, so don't be stricter here.
+# Anything less than the pair means this isn't an autoinstall drive, and the
+# caller falls back to the wizard.
+#
+# A `defer-provisioning` marker file stands in for user_credentials.json: deferred-provisioning
+# installs defer user creation to first boot, so imaging rigs ship no credentials.
+#
+# The optional argument prefixes every path the script touches; tests use it to
+# run against a sandbox instead of the live system.
 
 set -uo pipefail
 
@@ -12,10 +24,11 @@ by_label=$root/dev/disk/by-label
 dest=$root/root
 mnt=$root/run/cidata
 
-# A fast boot can beat udev here, dropping a headless install into the wizard.
+# The by-label symlinks come from udev, and on a fast boot this can run before
+# device enumeration has finished. Wait for the queue to drain instead of
+# racing it and silently dropping a headless install into the wizard.
 udevadm settle 2>/dev/null || true
 
-# mkfs.vfat uppercases the label, genisoimage does not.
 device=""
 for label in cidata CIDATA; do
   [[ -e $by_label/$label ]] && { device=$by_label/$label; break; }
@@ -25,26 +38,36 @@ done
 mkdir -p "$mnt"
 mount -o ro "$device" "$mnt" || exit 1
 
-required_inputs=(user_configuration.json user_credentials.json)
-optional_inputs=(user_full_name.txt user_email_address.txt authorized_keys)
-
-# A previous load in this live session may have left a stale authorized_keys,
-# which would authorize keys this drive never carried.
-for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
+# Clear any inputs a previous load in this live session left in /root before
+# copying the current drive: a stale `defer-provisioning` marker or credentials file would
+# otherwise force a fresh drive back into deferred provisioning or hand it an old
+# LUKS passphrase. The interactive wizard writes these same names, but a
+# cidata load always precedes it, so nothing of the user's is discarded here.
+optional_inputs=(user_credentials.json defer-provisioning user_full_name.txt user_email_address.txt authorized_keys tailscale_authkey)
+for file in user_configuration.json "${optional_inputs[@]}"; do
   rm -f "$dest/$file"
 done
 
 loaded=1
-if [[ -f $mnt/user_configuration.json && -f $mnt/user_credentials.json ]]; then
-  files=()
-  for file in "${required_inputs[@]}" "${optional_inputs[@]}"; do
+if [[ -f $mnt/user_configuration.json ]] && [[ -f $mnt/user_credentials.json || -f $mnt/defer-provisioning ]]; then
+  # A historical Monarch cidata pair is recognizable but unsafe to reinterpret:
+  # regenerate it so the install intent is explicit and versioned.
+  if ! jq -e '.monarch_install.schema_version == 1' "$mnt/user_configuration.json" >/dev/null 2>&1; then
+    echo "Unsupported legacy cidata: regenerate it with monarch-iso-cidata." >&2
+    loaded=2
+    umount "$mnt"
+    exit $loaded
+  fi
+  files=("$mnt"/user_configuration.json)
+  for file in "${optional_inputs[@]}"; do
     [[ -f $mnt/$file ]] && files+=("$mnt/$file")
   done
-
   if cp "${files[@]}" "$dest"/; then
     loaded=0
   else
-    # Else a half-copied drive leaks into the wizard, which cleans up only its own.
+    # A partial copy must not leave files behind: the wizard cleans up only
+    # what it writes itself, so a half-copied authorized_keys would leak into
+    # the interactive install that follows.
     for file in "${files[@]}"; do
       rm -f "$dest/${file##*/}"
     done

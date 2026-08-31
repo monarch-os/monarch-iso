@@ -1,2 +1,5 @@
 release/**
 vm-saves/**
+test-runs/**
+__pycache__/
+*.py[cod]
