@@ -84,7 +84,15 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 mkdir -p "$BUILD_RELEASE_PATH"
 
-BUILDER_CMD="${BUILDER_CMD:-docker}"
+read -r -a BUILDER <<<"${BUILDER_CMD:-docker}"
+
+# The docker group is root-equivalent, so builders may deliberately leave
+# their user out of it. Preserve explicit BUILDER_CMD overrides (podman,
+# wrappers, or sudo docker), but make the default work through sudo when the
+# Docker socket refuses the current user.
+if [[ ${#BUILDER[@]} == 1 && ${BUILDER[0]} == docker ]] && ! docker version &>/dev/null; then
+  BUILDER=(sudo docker)
+fi
 
 DOCKER_ARGS=(
   --rm
@@ -153,7 +161,7 @@ else
 fi
 
 # Run the builder with assembled args
-${BUILDER_CMD} run "${DOCKER_ARGS[@]}" cachyos/cachyos:latest /$BUILD_SCRIPT
+"${BUILDER[@]}" run "${DOCKER_ARGS[@]}" cachyos/cachyos:latest /$BUILD_SCRIPT
 
 # Move as install ref
 latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*.iso | head -n1)

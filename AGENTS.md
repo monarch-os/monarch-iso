@@ -16,7 +16,7 @@ When porting anything from `omarchy-iso`, assume every `archlinux`, `linux-t2`, 
 
 | Path | What it is |
 |------|-----------|
-| `bin/` | Host-side commands: `monarch-iso-make`, `-boot`, `-release`, `-sign`, `-upload`, `-rclone-config`, plus `monarch-vm` (names and reboots the disks in `vm-saves/`) |
+| `bin/` | Host-side commands: `monarch-iso-make`, `-boot`, `-test`, `-test-stop`, `-release`, `-sign`, `-upload`, `-rclone-config`, plus `monarch-vm` (names and reboots the disks in `vm-saves/`) |
 | `builder/build-iso.sh` | Runs **inside** the CachyOS container; assembles airootfs and calls `mkarchiso` |
 | `builder/archinstall.packages` | Extra packages fed to the offline mirror for archinstall itself |
 | `builder/prune-offline-mirror.sh` | Trims the offline mirror to the exact resolved transaction before indexing |
@@ -126,6 +126,7 @@ Autoinstall images meant to come up unattended want encryption off.
 ```bash
 ./bin/monarch-iso-make            # build → ./release  (--no-cache, --no-boot-offer, --local-source, --dev)
 ./bin/monarch-iso-boot            # pick an ISO and boot it in QEMU  ([reuse] [offline])
+./bin/monarch-iso-test-stop       # stop a VM left by monarch-iso-test --keep-running
 ./bin/monarch-vm save|boot|list   # name, keep and reboot disks in vm-saves/
 ./bin/monarch-iso-release <ver>   # make + sign + upload
 ```

@@ -18,10 +18,12 @@
 #                      first boot runs monarch-provision-owner and creates it there
 #   --reuse-base       Skip the install phase if a base image already exists
 #   --install-only     Stop after producing the installed base image
-#   --sync-monarch DIR Push DIR's test/acceptance into the guest before running
+#   --sync-monarch DIR Push DIR's test suite into the guest before running
 #                      (defaults to MONARCH_PATH when the suite is present)
 #   --sync-all DIR     Push all of DIR (bin/config/shell/test) into the guest
+#                      and also run the CLI and shell suites there
 #   --port PORT        Host port forwarded to guest SSH (default 2222)
+#                      VNC follows it: 2222 -> :5/5905, 2223 -> :6/5906
 #   --memory MB        VM memory (default 8192)
 #   --timeout SECS     Install timeout (default 2400)
 #   --keep-running     Leave the acceptance VM running after the suite finishes
@@ -97,7 +99,13 @@ BASE_DISK="$BASE_DIR/base.qcow2"
 BASE_OVMF="$BASE_DIR/OVMF_VARS.4m.fd"
 SSH_KEY="$BASE_DIR/id_ed25519"
 HTTP_PORT=$((SSH_PORT + 1))
+VNC_DISPLAY="${MONARCH_ISO_TEST_VNC_DISPLAY:-$((SSH_PORT - 2217))}"
 HTTP_PID=""
+
+if ((VNC_DISPLAY < 0)); then
+  echo "SSH port $SSH_PORT cannot derive a VNC display; set MONARCH_ISO_TEST_VNC_DISPLAY" >&2
+  exit 1
+fi
 
 mkdir -p "$BASE_DIR" "$RUN_DIR"
 
@@ -201,6 +209,10 @@ start_vm() {
   local disk="$1" serial="$2"
   shift 2
 
+  # A viewer that resizes the guest display breaks the OCR console driver and
+  # can wedge virtio-gpu during early boot. VNC is observation-only here.
+  log "Watch (do not resize): vncviewer -RemoteResize=0 127.0.0.1:$((5900 + VNC_DISPLAY))"
+
   qemu-system-x86_64 \
     -cpu host -enable-kvm -machine q35,accel=kvm \
     -smp "$(nproc)" \
@@ -211,6 +223,7 @@ start_vm() {
     -device virtio-blk-pci,drive=drive0,bootindex=1 \
     -device virtio-vga \
     -display none \
+    -vnc "127.0.0.1:$VNC_DISPLAY" \
     -usb -device usb-tablet \
     -netdev user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
     -device virtio-net-pci,netdev=net0 \
@@ -875,40 +888,39 @@ EOF
   (cd "$BASE_DIR/www" && exec python3 -m http.server "$HTTP_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
   HTTP_PID=$!
 
-  local waited=0
-  while true; do
+  # Type the login blind. OCR is fragile when a VNC viewer has resized the
+  # framebuffer; SSH coming up is the result that actually matters. Getty
+  # re-prompts after a failed login, so retrying the complete sequence safely
+  # recovers when the first attempt started too early.
+  sleep 15
+  local attempt
+  for attempt in 1 2 3; do
     press ctrl-alt-f3
+    sleep 8
+    press ret
+    sleep 2
+    type_text "$GUEST_USER"
+    capture_console "success-first-boot-03-console-username"
+    press ret
+    sleep 3
+    type_text "$GUEST_PASSWORD"
+    press ret
     sleep 4
-    ocr_screen | grep -qi "login:" && break
-    ((waited += 8))
+    type_text "curl -fsS http://10.0.2.2:$HTTP_PORT/bootstrap -o /tmp/bs && bash /tmp/bs"
+    capture_console "success-first-boot-05-bootstrap-command"
+    press ret
 
-    if ((waited >= 300)); then
-      capture_console "failure-first-boot-console-timeout"
-      echo "Timed out waiting for a console login prompt" >&2
-      return 1
+    if wait_for_ssh 120 "failure-first-boot-ssh-timeout-$attempt"; then
+      capture_console "success-first-boot-06-bootstrap-complete"
+      kill "$HTTP_PID" 2>/dev/null || true
+      HTTP_PID=""
+      press ctrl-alt-f1
+      return 0
     fi
-    sleep 4
   done
 
-  type_text "$GUEST_USER"
-  capture_console "success-first-boot-03-console-username"
-  press ret
-  wait_for_screen "Password" 60
-  type_text "$GUEST_PASSWORD"
-  capture_console "success-first-boot-04-console-password"
-  press ret
-  sleep 3
-
-  type_text "curl -fsS http://10.0.2.2:$HTTP_PORT/bootstrap -o /tmp/bs && bash /tmp/bs"
-  capture_console "success-first-boot-05-bootstrap-command"
-  press ret
-
-  wait_for_ssh 360 "failure-first-boot-ssh-timeout"
-  capture_console "success-first-boot-06-bootstrap-complete"
-
-  kill "$HTTP_PID" 2>/dev/null || true
-  HTTP_PID=""
-  press ctrl-alt-f1
+  echo "Console bootstrap did not produce SSH access after 3 attempts" >&2
+  return 1
 }
 
 # Get a freshly booted system to a running Hyprland session, typing at the
@@ -1058,16 +1070,13 @@ sync_monarch() {
     log "Syncing $SYNC_DIR into the guest"
     tar -C "$SYNC_DIR" --exclude .git -cf - . | ssh_guest "mkdir -p $target && tar -C $target -xf -"
   else
-    log "Syncing $SYNC_DIR/test/acceptance into the guest"
-    tar -C "$SYNC_DIR/test" -cf - acceptance acceptance.d | ssh_guest "mkdir -p $target/test && tar -C $target/test -xf -"
+    log "Syncing $SYNC_DIR/test into the guest"
+    tar -C "$SYNC_DIR" -cf - test | ssh_guest "mkdir -p $target && tar -C $target -xf -"
   fi
 }
 
 acceptance_phase() {
   log "Booting acceptance VM from base image overlay"
-
-  local guest_monarch_path="/usr/share/monarch"
-  $SYNC_ALL && guest_monarch_path=".local/share/monarch"
 
   qemu-img create -f qcow2 -b "$BASE_DISK" -F qcow2 "$RUN_DIR/run.qcow2" >/dev/null
   start_vm "$RUN_DIR/run.qcow2" "$RUN_DIR/serial.log"
@@ -1078,8 +1087,15 @@ acceptance_phase() {
   local status=0
   shortcut_smoke_phase || status=1
 
+  if $SYNC_ALL; then
+    log "Running CLI and shell suites in the guest"
+    ssh_guest "bash .local/share/monarch/test/all" || status=$?
+  fi
+
+  # Acceptance always exercises the installed product. The synchronized tree
+  # supplies tests, not a development replacement for /usr/share/monarch.
   log "Running acceptance suite"
-  ssh_guest "MONARCH_PATH=$guest_monarch_path MONARCH_ACCEPTANCE_DIR=/tmp/monarch-acceptance bash .local/share/monarch/test/acceptance" || status=$?
+  ssh_guest "MONARCH_PATH=/usr/share/monarch MONARCH_ACCEPTANCE_DIR=/tmp/monarch-acceptance MONARCH_ACCEPTANCE_SUDO_PASSWORD=$GUEST_PASSWORD bash .local/share/monarch/test/acceptance" || status=$?
 
   log "Collecting artifacts into $RUN_DIR"
   ssh_guest "tar -C /tmp -cf - monarch-acceptance 2>/dev/null" | tar -C "$RUN_DIR" -xf - || true
