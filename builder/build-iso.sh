@@ -233,44 +233,39 @@ ln -s "$offline_mirror_dir" "/var/cache/monarch/mirror/offline"
 mapfile -t target_packages < <(
   {
     grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-base.packages"
-    printf '%s\n' \
-      base sudo linux-firmware mkinitcpio linux-cachyos btrfs-progs \
-      zram-generator \
-      base-devel git limine efibootmgr monarch-keyring monarch-settings monarch \
-      lua51 luarocks \
-      pipewire pipewire-alsa pipewire-jack pipewire-pulse gst-plugin-pipewire \
-      libpulse wireplumber
+    grep -hv '^#\|^$' /builder/target-bootstrap.packages
   } | sort -u
 )
 
 resolve_expected_packages() {
-  local resolve_root=$1
-  shift
+  local resolved
 
-  [[ $resolve_root == /tmp/monarch-expected-packages* ]] || {
-    echo "ERROR: unsafe expected-package resolve root: $resolve_root" >&2
+  if ! resolved=$(pacman --config "$build_cache_dir/pacman-offline.conf" \
+    --root "$expected_packages_root" \
+    --dbpath "$expected_packages_root/var/lib/pacman" \
+    --noconfirm -S --print --print-format '%n' "$@"); then
+    echo "ERROR: could not resolve expected target packages" >&2
     return 1
-  }
-  rm -rf "$resolve_root"
-  mkdir -p "$resolve_root/var/lib/pacman"
-  pacman --config "$build_cache_dir/pacman-offline.conf" \
-    --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
-    --noconfirm -Sy >/dev/null
-  pacman --config "$build_cache_dir/pacman-offline.conf" \
-    --root "$resolve_root" --dbpath "$resolve_root/var/lib/pacman" \
-    --noconfirm -S --print --print-format '%n' "$@" | sort -u | wc -l
+  fi
+  printf '%s\n' "$resolved" | sort -u | grep -c .
 }
 
-expected_packages=$(resolve_expected_packages \
-  /tmp/monarch-expected-packages "${target_packages[@]}")
+expected_packages_root=/tmp/monarch-expected-packages
+rm -rf /tmp/monarch-expected-packages
+mkdir -p "$expected_packages_root/var/lib/pacman"
+pacman --config "$build_cache_dir/pacman-offline.conf" \
+  --root "$expected_packages_root" \
+  --dbpath "$expected_packages_root/var/lib/pacman" \
+  --noconfirm -Sy >/dev/null
+
+expected_packages=$(resolve_expected_packages "${target_packages[@]}")
 printf '%s\n' "$expected_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages"
 
 mapfile -t minimal_target_packages < <(
   printf '%s\n' "${target_packages[@]}" |
     grep -Fvx -f "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-preinstalls.packages"
 )
-expected_minimal_packages=$(resolve_expected_packages \
-  /tmp/monarch-expected-packages-minimal "${minimal_target_packages[@]}")
+expected_minimal_packages=$(resolve_expected_packages "${minimal_target_packages[@]}")
 printf '%s\n' "$expected_minimal_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages-minimal"
 
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our

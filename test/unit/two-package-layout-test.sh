@@ -44,16 +44,16 @@ grep -qF 'resolve_expected_packages' "$root/builder/build-iso.sh"
 grep -qF 'pacman-offline.conf' "$root/builder/build-iso.sh"
 
 target_block=$(sed -n '/mapfile -t target_packages/,/^)/p' "$root/builder/build-iso.sh")
-for package in base sudo linux-firmware mkinitcpio linux-cachyos btrfs-progs \
-  zram-generator monarch-keyring monarch monarch-settings lua51 luarocks \
-  pipewire-alsa pipewire-jack pipewire-pulse gst-plugin-pipewire libpulse; do
-  grep -qw "$package" <<<"$target_block" || {
-    echo "unconditional target package missing from the expected count: $package" >&2
-    exit 1
-  }
-done
+grep -qF '/builder/target-bootstrap.packages' <<<"$target_block"
 if grep -qF '/builder/archinstall.packages' <<<"$target_block"; then
   echo "live-only archinstall packages leak into the target package count" >&2
+  exit 1
+fi
+
+resolver_block=$(sed -n '/resolve_expected_packages()/,/^}/p' "$root/builder/build-iso.sh")
+grep -qF 'if ! resolved=$(pacman' <<<"$resolver_block"
+if grep -qE 'pacman .*\|' <<<"$resolver_block"; then
+  echo "pacman resolution failure can be masked by a pipeline" >&2
   exit 1
 fi
 if grep -qF 'monarch-other.packages' <<<"$target_block"; then
