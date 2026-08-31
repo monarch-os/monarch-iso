@@ -76,3 +76,8 @@ fi
 echo -e "\e[32mSHA256: $iso_sha\e[0m"
 
 "$BUILD_ROOT/bin/monarch-iso-upload" "$release_iso"
+
+echo -e "\e[32mReleased Monarch $BUILD_VERSION\e[0m"
+echo "  URL:    https://iso.monarchlinux.com/${release_iso##*/}"
+echo "  SHA256: $iso_sha"
+echo "  Local:  $release_iso"

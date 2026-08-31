@@ -63,7 +63,7 @@ run_upload() {
   PATH="$work/stubs:$PATH" "$ROOT/bin/monarch-iso-upload" "$@" >"$work/rclone-log" 2>"$work/upload-err"
 }
 
-PATH="$work/stubs:$PATH" "$sandbox/bin/monarch-iso-release" --no-make 9.9.9 >/dev/null
+release_output=$(PATH="$work/stubs:$PATH" "$sandbox/bin/monarch-iso-release" --no-make 9.9.9)
 
 release_iso="$sandbox/release/monarch-9.9.9.iso"
 checksum_file="$release_iso.sha256"
@@ -83,6 +83,14 @@ pass "the checksum names the ISO alone"
 (cd "$sandbox/release" && sha256sum -c --status monarch-9.9.9.iso.sha256) ||
   fail "sha256sum -c verifies the ISO from its own directory"
 pass "sha256sum -c verifies the ISO from its own directory"
+
+grep -qF "URL:    https://iso.monarchlinux.com/monarch-9.9.9.iso" <<<"$release_output" ||
+  fail "release prints the public download URL" "$release_output"
+grep -qF "SHA256: $(sha256sum "$release_iso" | cut -d ' ' -f 1)" <<<"$release_output" ||
+  fail "release prints the published checksum" "$release_output"
+grep -qF "Local:  $release_iso" <<<"$release_output" ||
+  fail "release prints the local artifact path" "$release_output"
+pass "release ends with the public URL, checksum, and local path"
 
 # The whole point of the sidecar is catching bytes that changed after release,
 # so prove it fails on bytes that changed after release.
