@@ -40,13 +40,32 @@ if grep -qE "^(provides|conflicts|replaces)=\('monarch-dns'\)" "$runtime_pkgbuil
 fi
 
 grep -qF 'for package_name in monarch-settings monarch' "$root/builder/build-monarch-package.sh"
-grep -qF 'grep -Fxv -e monarch -e monarch-settings' "$root/builder/build-iso.sh"
-grep -qF '((expected_packages += 2))' "$root/builder/build-iso.sh"
-grep -qF "printf '%s\\n' monarch-keyring monarch monarch-settings" "$root/builder/build-iso.sh"
+grep -qF 'resolve_expected_packages' "$root/builder/build-iso.sh"
+grep -qF 'pacman-offline.conf' "$root/builder/build-iso.sh"
 
 target_block=$(sed -n '/mapfile -t target_packages/,/^)/p' "$root/builder/build-iso.sh")
+grep -qF '/builder/target-bootstrap.packages' <<<"$target_block"
 if grep -qF '/builder/archinstall.packages' <<<"$target_block"; then
   echo "live-only archinstall packages leak into the target package count" >&2
+  exit 1
+fi
+
+resolver_block=$(sed -n '/resolve_expected_packages()/,/^}/p' "$root/builder/build-iso.sh")
+grep -qF 'if ! resolved=$(pacman' <<<"$resolver_block"
+if grep -qE 'pacman .*\|' <<<"$resolver_block"; then
+  echo "pacman resolution failure can be masked by a pipeline" >&2
+  exit 1
+fi
+if grep -qF 'monarch-other.packages' <<<"$target_block"; then
+  echo "hardware-conditional packages leak into the target package count" >&2
+  exit 1
+fi
+
+runtime_package_list=$(sed -n '/def _runtime_package_list/,/^$/p' \
+  "$root/configs/airootfs/usr/share/monarch-iso/orchestrator/phases_impl.py")
+grep -qF 'monarch-base.packages' <<<"$runtime_package_list"
+if grep -qF 'monarch-other.packages' <<<"$runtime_package_list"; then
+  echo "hardware-conditional packages leak into the target install transaction" >&2
   exit 1
 fi
 

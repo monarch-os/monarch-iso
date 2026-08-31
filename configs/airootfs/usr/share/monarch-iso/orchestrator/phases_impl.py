@@ -683,13 +683,13 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
             for line in (Path("/usr/share/monarch-iso") / "monarch-preinstalls.packages").read_text().splitlines()
             if line.strip() and not line.lstrip().startswith("#")
         }
-    for package_list in ("monarch-base.packages", "monarch-other.packages"):
-        for raw in (Path("/usr/share/monarch-iso") / package_list).read_text().splitlines():
-            s = raw.strip()
-            if not s or s.startswith("#"):
-                continue
-            if s not in already_installed and s not in excluded and s not in pkgs:
-                pkgs.append(s)
+    package_list = Path("/usr/share/monarch-iso/monarch-base.packages")
+    for raw in package_list.read_text().splitlines():
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s not in already_installed and s not in excluded and s not in pkgs:
+            pkgs.append(s)
     return pkgs
 
 

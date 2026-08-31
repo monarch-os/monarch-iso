@@ -216,49 +216,57 @@ printf '%s\n' "${required_package_files[@]}" |
 rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
 repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
+# mkarchiso and the offline pacman config address the mirror at this path.
+# Link it before resolving the dashboard counts so those counts use the final
+# pruned repository, including locally-built Monarch packages and their exact
+# dependency metadata.
+mkdir -p /var/cache/monarch/mirror
+ln -s "$offline_mirror_dir" "/var/cache/monarch/mirror/offline"
+
 # Record the resolved target transaction for the dashboard and post-install
-# diagnostics. archinstall.packages feeds the live/offline installer and must
-# not be counted as target state: several entries are hardware-conditional or
-# live-only, and tailscale is installed only when cidata supplies an auth key.
+# diagnostics. monarch-other.packages and archinstall.packages feed the offline
+# mirror but must not be counted as target state: their hardware packages are
+# installed conditionally, several entries are live-only, and tailscale is
+# installed only when cidata supplies an auth key. Include every unconditional
+# seed installed outside monarch-base.packages too: archinstall's minimal
+# system, zram, the early bootstrap and its PipeWire application selection.
 mapfile -t target_packages < <(
   {
     grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-base.packages"
-    grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-other.packages"
-    printf '%s\n' monarch-keyring monarch monarch-settings
+    grep -hv '^#\|^$' /builder/target-bootstrap.packages
   } | sort -u
 )
-if [[ -n $local_monarch_build ]]; then
-  mapfile -t target_packages < <(
-    printf '%s\n' "${target_packages[@]}" | grep -Fxv -e monarch -e monarch-settings
-  )
-fi
-expected_packages=$(
-  pacman --config /configs/pacman-online.conf --noconfirm --dbpath /tmp/offlinedb \
-    -S --print --print-format '%n' "${target_packages[@]}" | sort -u | wc -l
-)
-if [[ -n $local_monarch_build ]]; then
-  ((expected_packages += 2))
-fi
+
+resolve_expected_packages() {
+  local resolved
+
+  if ! resolved=$(pacman --config "$build_cache_dir/pacman-offline.conf" \
+    --root "$expected_packages_root" \
+    --dbpath "$expected_packages_root/var/lib/pacman" \
+    --noconfirm -S --print --print-format '%n' "$@"); then
+    echo "ERROR: could not resolve expected target packages" >&2
+    return 1
+  fi
+  printf '%s\n' "$resolved" | sort -u | grep -c .
+}
+
+expected_packages_root=/tmp/monarch-expected-packages
+rm -rf /tmp/monarch-expected-packages
+mkdir -p "$expected_packages_root/var/lib/pacman"
+pacman --config "$build_cache_dir/pacman-offline.conf" \
+  --root "$expected_packages_root" \
+  --dbpath "$expected_packages_root/var/lib/pacman" \
+  --noconfirm -Sy >/dev/null
+
+expected_packages=$(resolve_expected_packages "${target_packages[@]}")
 printf '%s\n' "$expected_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages"
 
 mapfile -t minimal_target_packages < <(
   printf '%s\n' "${target_packages[@]}" |
     grep -Fvx -f "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-preinstalls.packages"
 )
-expected_minimal_packages=$(
-  pacman --config /configs/pacman-online.conf --noconfirm --dbpath /tmp/offlinedb \
-    -S --print --print-format '%n' "${minimal_target_packages[@]}" | sort -u | wc -l
-)
-if [[ -n $local_monarch_build ]]; then
-  ((expected_minimal_packages += 2))
-fi
+expected_minimal_packages=$(resolve_expected_packages "${minimal_target_packages[@]}")
 printf '%s\n' "$expected_minimal_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages-minimal"
-
-# Create a symlink to the offline mirror instead of duplicating it.
-# mkarchiso needs packages at /var/cache/monarch/mirror/offline in the container,
-# but they're actually in $build_cache_dir/airootfs/var/cache/monarch/mirror/offline
-mkdir -p /var/cache/monarch/mirror
-ln -s "$offline_mirror_dir" "/var/cache/monarch/mirror/offline"
 
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted.
