@@ -5,6 +5,7 @@ set -e
 offline_mirror_dir="$1"
 [[ -n $offline_mirror_dir ]] || { echo "Usage: build-monarch-package.sh <offline-mirror-dir>" >&2; exit 1; }
 [[ -d /monarch-source ]] || { echo "ERROR: /monarch-source not mounted" >&2; exit 1; }
+[[ -n ${MONARCH_LOCAL_PKGVER:-} ]] || { echo "ERROR: MONARCH_LOCAL_PKGVER is required" >&2; exit 1; }
 for package_name in monarch monarch-settings; do
   [[ -d /monarch-pkgs/pkgbuilds/$package_name ]] || {
     echo "ERROR: /monarch-pkgs/pkgbuilds/$package_name not found" >&2
@@ -13,8 +14,11 @@ for package_name in monarch monarch-settings; do
 done
 
 work_dir=/tmp/monarch-pkg-build
-rm -rf "$work_dir"
-mkdir -p "$work_dir"
+local_source_dir=/tmp/monarch-local-source
+rm -rf "$work_dir" "$local_source_dir"
+mkdir -p "$work_dir" "$local_source_dir"
+cp -a /monarch-source/. "$local_source_dir/"
+printf '%s\n' "$MONARCH_LOCAL_PKGVER" >"$local_source_dir/version"
 
 if ! id builder &>/dev/null; then
   useradd -m -s /bin/bash builder
@@ -29,7 +33,7 @@ pacman --config /configs/pacman-online.conf -Sy --noconfirm
 for package_name in monarch-settings monarch; do
   su builder -c "
     cd '$work_dir/$package_name' &&
-    PKGDEST='$work_dir' MONARCH_SRC=/monarch-source \
+    PKGDEST='$work_dir' MONARCH_SRC='$local_source_dir' \
       makepkg --noconfirm --skippgpcheck --skipchecksums --nodeps -f
   "
 done

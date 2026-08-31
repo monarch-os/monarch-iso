@@ -65,6 +65,7 @@ if [[ -n $LOCAL_MONARCH_PATH ]]; then
   [[ -d $LOCAL_PKGS_PATH ]] || { echo "monarch-pkgs checkout not found: $LOCAL_PKGS_PATH" >&2; exit 1; }
   LOCAL_MONARCH_PATH=$(realpath "$LOCAL_MONARCH_PATH")
   LOCAL_PKGS_PATH=$(realpath "$LOCAL_PKGS_PATH")
+  MONARCH_LOCAL_PKGVER=$("${BASH_SOURCE[0]%/*}/../builder/source-package-version.sh" "$LOCAL_MONARCH_PATH")
 fi
 
 # Clear out old packages. This is the host's own pacman cache, not just the
@@ -131,6 +132,7 @@ done
 # Use local source of Monarch from $MONARCH_PATH instead of git checkout
 if [[ -n $LOCAL_MONARCH_PATH ]]; then
   DOCKER_ARGS+=(
+    -e "MONARCH_LOCAL_PKGVER=$MONARCH_LOCAL_PKGVER"
     -v "$LOCAL_MONARCH_PATH:/monarch-source:ro"
     -v "$LOCAL_PKGS_PATH:/monarch-pkgs:ro"
   )
