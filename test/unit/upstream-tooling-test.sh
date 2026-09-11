@@ -21,13 +21,13 @@ grep -qF 'ssh_guest "bash .local/share/monarch/test/all"' "$HARNESS"
 grep -qF 'MONARCH_PATH=/usr/share/monarch' "$HARNESS"
 grep -qF 'wait_for_screen "Cybersecurity" 300' "$HARNESS"
 grep -qF 'niri.wayland-*.$pid.sock' "$HARNESS"
-grep -qF -- '--skip-shortcuts) SKIP_SHORTCUTS=true' "$HARNESS"
 grep -qF -- '--acceptance-autologin) ACCEPTANCE_AUTOLOGIN=true' "$HARNESS"
 grep -qF 'press ret # English (US) is the first layout' "$HARNESS"
 grep -qF 'pgrep -u "$(id -u)" -x niri' "$HARNESS"
 grep -qF 'start_vm "$RUN_DIR/run.qcow2" "$RUN_DIR/serial.log" || return 1' "$HARNESS"
 [[ $(grep -c 'wait_for_screen "software profile" 60' "$HARNESS") == 2 ]]
 ! grep -qF 'wait_for_screen "Opinionated"' "$HARNESS"
+! grep -qE 'hyprctl|skip-shortcuts|SKIP_SHORTCUTS' "$HARNESS"
 
 [[ -x $STOP ]]
 grep -qF 'is_test_vm "$pid" "$candidate"' "$STOP"

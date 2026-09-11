@@ -69,8 +69,7 @@ class KeyboardConfigurationTest(unittest.TestCase):
         return target
 
     def test_writes_keymap_and_xkb_settings_and_preserves_font(self):
-        # XKBLAYOUT is load-bearing: monarch's detect-keyboard-layout.sh copies
-        # it into Hyprland's kb_layout on the installed system.
+        # XKBLAYOUT is load-bearing: Monarch mirrors it into Niri's input config.
         with tempfile.TemporaryDirectory() as directory:
             target = self.target(directory)
             self.assertTrue(KEYBOARD.configure_keyboard(target, "us"))

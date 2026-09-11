@@ -3,10 +3,10 @@
 archinstall's set_keyboard_language boots the installed system in a
 systemd-nspawn container just to run localectl. systemd-firstboot --root
 produces the part of that output Monarch actually consumes — KEYMAP for the
-console plus the XKB* settings in vconsole.conf that monarch's
-detect-keyboard-layout.sh copies into Hyprland's kb_layout — without booting
-anything. The Xorg 00-keyboard.conf that localectl also writes is not
-generated: nothing on an Monarch system reads it.
+console plus the XKB* settings in vconsole.conf that Monarch's
+detect-keyboard-layout.sh copies into Niri's input configuration — without
+booting anything. The Xorg 00-keyboard.conf that localectl also writes is not
+generated: nothing on a Monarch system reads it.
 """
 
 from __future__ import annotations
