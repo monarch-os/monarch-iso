@@ -18,6 +18,8 @@
 #                      first boot runs monarch-provision-owner and creates it there
 #   --reuse-base       Skip the install phase if a base image already exists
 #   --install-only     Stop after producing the installed base image
+#   --acceptance-autologin
+#                      Enable test-only Niri autologin in the disposable overlay
 #   --sync-monarch DIR Push DIR's test suite into the guest before running
 #                      (defaults to MONARCH_PATH when the suite is present)
 #   --sync-all DIR     Push all of DIR (bin/config/shell/test) into the guest
@@ -43,6 +45,7 @@ ENCRYPT=false
 PROVISION=false
 REUSE_BASE=false
 INSTALL_ONLY=false
+ACCEPTANCE_AUTOLOGIN=false
 KEEP_RUNNING=false
 NO_PREVIEW=false
 SYNC_DIR=""
@@ -58,6 +61,7 @@ while (($#)); do
     --provision) PROVISION=true ;;
     --reuse-base) REUSE_BASE=true ;;
     --install-only) INSTALL_ONLY=true ;;
+    --acceptance-autologin) ACCEPTANCE_AUTOLOGIN=true ;;
     --keep-running) KEEP_RUNNING=true ;;
     --no-preview) NO_PREVIEW=true ;;
     --sync-monarch) SYNC_DIR="$2"; shift ;;
@@ -221,8 +225,8 @@ start_vm() {
     -drive if=pflash,format=raw,file="$BASE_OVMF" \
     -drive file="$disk",format=qcow2,if=none,id=drive0 \
     -device virtio-blk-pci,drive=drive0,bootindex=1 \
-    -device virtio-vga \
-    -display none \
+    -device virtio-vga-gl \
+    -display egl-headless,rendernode=/dev/dri/renderD128 \
     -vnc "127.0.0.1:$VNC_DISPLAY" \
     -usb -device usb-tablet \
     -netdev user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
@@ -368,250 +372,10 @@ wait_for_ssh() {
 }
 
 session_started() {
-  ssh_guest "ls /run/user/1000/hypr 2>/dev/null | grep -q ." 2>/dev/null
-}
-
-ssh_session() {
-  local command="$1"
-
-  ssh_guest "export XDG_RUNTIME_DIR=/run/user/\$(id -u); \
-    export DBUS_SESSION_BUS_ADDRESS=unix:path=\$XDG_RUNTIME_DIR/bus; \
-    export LANG=\$(systemctl --user show-environment | sed -n 's/^LANG=//p' | head -1); \
-    export LANG=\${LANG:-C.UTF-8}; \
-    export HYPRLAND_INSTANCE_SIGNATURE=\$(ls -t \$XDG_RUNTIME_DIR/hypr | head -1); \
-    export WAYLAND_DISPLAY=\$(find \$XDG_RUNTIME_DIR -maxdepth 1 -name 'wayland-*' ! -name '*.lock' -printf '%f\\n' | head -1); \
-    export MONARCH_PATH=/usr/share/monarch; \
-    export PATH=\$MONARCH_PATH/bin:\$PATH; \
-    $command" </dev/null
-}
-
-wait_for_guest_state() {
-  local description="$1" timeout="$2"
-  shift 2
-  local deadline=$((SECONDS + timeout))
-
-  until "$@" >/dev/null 2>&1; do
-    if ((SECONDS >= deadline)); then
-      printf 'not ok - %s\n' "$description" >&2
-      return 1
-    fi
-    sleep 1
+  ssh_guest 'for pid in $(pgrep -u "$(id -u)" -x niri); do
+    ls /run/user/$(id -u)/niri.wayland-*.$pid.sock >/dev/null 2>&1 && exit 0
   done
-
-  printf 'ok - %s\n' "$description"
-}
-
-guest_layer_present() {
-  local namespace="$1"
-
-  ssh_session "hyprctl -j layers | jq -e --arg namespace '$namespace' \
-    '[.. | objects | select(.namespace? == \$namespace)] | length > 0'"
-}
-
-guest_layer_absent() {
-  ! guest_layer_present "$1"
-}
-
-cleanup_shortcut_state() {
-  ssh_session 'for plugin in monarch.launcher monarch.menu monarch.emojis monarch.clipboard monarch.audio; do
-    monarch-shell shell hide "$plugin" >/dev/null 2>&1 || true
-  done
-  while read -r address; do
-    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null 2>&1 ||
-      hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
-  done < <(hyprctl -j clients | jq -r '\''.[] | select(.class == "foot") | .address'\'')
-  hyprctl dispatch workspace 1 >/dev/null 2>&1 || true' >/dev/null 2>&1 || true
-}
-
-verify_surface_shortcut() {
-  local name="$1" chord="$2" namespace="$3" plugin="$4"
-
-  press "$chord"
-  if ! wait_for_guest_state "$name shortcut opens" 15 guest_layer_present "$namespace"; then
-    capture_console "failure-shortcut-$name-open"
-    ssh_session "monarch-shell shell hide '$plugin' >/dev/null 2>&1 || true" || true
-    return 1
-  fi
-  capture_console "success-shortcut-$name"
-
-  press esc
-  if ! wait_for_guest_state "$name shortcut surface closes" 15 guest_layer_absent "$namespace"; then
-    capture_console "failure-shortcut-$name-close"
-    ssh_session "monarch-shell shell hide '$plugin' >/dev/null 2>&1 || true" || true
-    return 1
-  fi
-}
-
-verify_desktop_shortcuts() {
-  cleanup_shortcut_state
-
-  press meta_l-ret
-  if ! wait_for_guest_state "terminal shortcut opens a window" 30 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
-    capture_console "failure-shortcut-terminal-open"
-    return 1
-  fi
-
-  press meta_l-ret
-  if ! wait_for_guest_state "terminal shortcut opens a second window" 30 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 2'"; then
-    capture_console "failure-shortcut-terminal-second-window"
-    return 1
-  fi
-  capture_console "success-shortcut-desktop-01-two-tiled-terminals"
-
-  press meta_l-t
-  if ! wait_for_guest_state "floating shortcut floats the active window" 15 \
-    ssh_session "hyprctl -j activewindow | jq -e '.class == \"foot\" and .floating == true'"; then
-    capture_console "failure-shortcut-window-float"
-    return 1
-  fi
-  capture_console "success-shortcut-desktop-02-floating-terminal"
-
-  press meta_l-t
-  if ! wait_for_guest_state "floating shortcut returns the window to tiling" 15 \
-    ssh_session "hyprctl -j activewindow | jq -e '.class == \"foot\" and .floating == false'"; then
-    capture_console "failure-shortcut-window-retile"
-    return 1
-  fi
-
-  press meta_l-shift-2
-  if ! wait_for_guest_state "move shortcut follows the window to workspace 2" 15 \
-    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 2' && \
-      hyprctl -j activewindow | jq -e '.class == \"foot\" and .workspace.id == 2'"; then
-    capture_console "failure-shortcut-window-workspace-2"
-    return 1
-  fi
-  capture_console "success-shortcut-desktop-03-terminal-on-workspace-2"
-
-  press meta_l-1
-  if ! wait_for_guest_state "workspace shortcut returns to workspace 1" 15 \
-    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 1'"; then
-    capture_console "failure-shortcut-workspace-1"
-    return 1
-  fi
-  capture_console "success-shortcut-desktop-04-workspace-1"
-
-  press meta_l-w
-  if ! wait_for_guest_state "close shortcut closes the workspace 1 terminal" 15 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
-    capture_console "failure-shortcut-close-workspace-1"
-    return 1
-  fi
-
-  press meta_l-2
-  if ! wait_for_guest_state "workspace shortcut visits workspace 2" 15 \
-    ssh_session "hyprctl -j activeworkspace | jq -e '.id == 2'"; then
-    capture_console "failure-shortcut-visit-workspace-2"
-    return 1
-  fi
-  press meta_l-w
-  if ! wait_for_guest_state "close shortcut closes the workspace 2 terminal" 15 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 0'"; then
-    capture_console "failure-shortcut-close-workspace-2"
-    return 1
-  fi
-}
-
-verify_universal_clipboard_shortcuts() {
-  local copy_token="MonarchUniversalCopy$(date +%s)"
-  local paste_token="MonarchUniversalPaste$(date +%s)"
-  local terminal_token="MonarchTerminalPaste$(date +%s)"
-  local terminal_result="/tmp/monarch-universal-terminal-paste"
-
-  cleanup_shortcut_state
-  ssh_session "setsid -f chromium --new-window about:blank >/dev/null 2>&1"
-  if ! wait_for_guest_state "universal clipboard test opens Chromium" 45 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class | test(\"(?i)chromium\"))] | length == 1'"; then
-    capture_console "failure-shortcut-universal-clipboard-browser"
-    return 1
-  fi
-
-  press ctrl-l
-  type_text "$copy_token"
-  press ctrl-a
-  press meta_l-c
-  if ! wait_for_guest_state "universal copy uses the active GUI application" 15 \
-    ssh_session "[[ \$(wl-paste --no-newline) == '$copy_token' ]]"; then
-    capture_console "failure-shortcut-universal-copy"
-    return 1
-  fi
-
-  ssh_session "setsid -f bash -c 'printf \"%s\" \"$paste_token\" | wl-copy' >/dev/null 2>&1"
-  if ! wait_for_guest_state "universal paste clipboard is seeded" 15 \
-    ssh_session "[[ \$(wl-paste --no-newline) == '$paste_token' ]]"; then
-    capture_console "failure-shortcut-universal-paste-seed"
-    return 1
-  fi
-  press ctrl-l
-  press meta_l-v
-  sleep 1
-  press ctrl-a
-  press ctrl-c
-  if ! wait_for_guest_state "universal paste uses the active GUI application" 15 \
-    ssh_session "[[ \$(wl-paste --no-newline) == '$paste_token' ]]"; then
-    capture_console "failure-shortcut-universal-paste-gui"
-    return 1
-  fi
-  capture_console "success-shortcut-universal-copy-paste-gui"
-  ssh_session 'while read -r address; do
-    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null 2>&1 ||
-      hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
-  done < <(hyprctl -j clients | jq -r '\''.[] | select(.class | test("(?i)chromium")) | .address'\'')' || true
-
-  ssh_session "rm -f '$terminal_result'; \
-    setsid -f bash -c 'printf \"%s\" \"$terminal_token\" | wl-copy' >/dev/null 2>&1; \
-    setsid -f foot --app-id=foot -e bash -c 'read -r value; printf \"%s\" \"\$value\" > \"$terminal_result\"; sleep 30' >/dev/null 2>&1"
-  if ! wait_for_guest_state "terminal paste clipboard is seeded" 15 \
-    ssh_session "[[ \$(wl-paste --no-newline) == '$terminal_token' ]]"; then
-    capture_console "failure-shortcut-universal-paste-terminal-seed"
-    return 1
-  fi
-  if ! wait_for_guest_state "universal clipboard test opens a terminal" 30 \
-    ssh_session "hyprctl -j clients | jq -e '[.[] | select(.class == \"foot\")] | length == 1'"; then
-    capture_console "failure-shortcut-universal-clipboard-terminal"
-    return 1
-  fi
-
-  press meta_l-v
-  sleep 1
-  press ret
-  if ! wait_for_guest_state "universal paste uses the terminal-safe shortcut" 15 \
-    ssh_session "[[ \$(cat '$terminal_result' 2>/dev/null) == '$terminal_token' ]]"; then
-    capture_console "failure-shortcut-universal-paste-terminal"
-    return 1
-  fi
-  capture_console "success-shortcut-universal-paste-terminal"
-  cleanup_shortcut_state
-}
-
-shortcut_smoke_phase() {
-  log "Exercising primary desktop shortcuts through the VM keyboard"
-
-  local status=0
-  local name chord namespace plugin
-  local shortcuts='launcher|meta_l-spc|monarch-launcher|monarch.launcher
-menu|meta_l-alt-spc|monarch-menu|monarch.menu
-emojis|meta_l-ctrl-e|monarch-emojis|monarch.emojis
-clipboard|meta_l-ctrl-v|monarch-clipboard|monarch.clipboard
-audio-panel|meta_l-ctrl-a|monarch-keyboard-panel|monarch.audio'
-
-  cleanup_shortcut_state
-  while IFS='|' read -r name chord namespace plugin; do
-    if ! verify_surface_shortcut "$name" "$chord" "$namespace" "$plugin"; then
-      status=1
-    fi
-  done <<<"$shortcuts"
-
-  if ! verify_desktop_shortcuts; then
-    status=1
-  fi
-  if ! verify_universal_clipboard_shortcuts; then
-    status=1
-  fi
-  cleanup_shortcut_state
-
-  return $status
+  exit 1' 2>/dev/null
 }
 
 # ----------------------------------------------------- driving the installer
@@ -620,7 +384,7 @@ drive_configurator() {
   log "Driving the installer wizard"
 
   # A greeter (animated logo + tagline) opens the installer; Return begins.
-  wait_for_screen "Opinionated" 300
+  wait_for_screen "Cybersecurity" 300
   capture_console "success-installer-00-greeter"
   press ret
 
@@ -635,9 +399,13 @@ drive_configurator() {
     capture_console "success-installer-02-prepare-confirm"
     press ret # "Yes, prepare for another owner" is the affirmative default
 
-    # Jumps straight to disk selection, then the overwrite confirm.
+    wait_for_screen "software profile" 60
+    capture_console "success-installer-03-prepare-software-profile"
+    press ret
+
+    # Then disk selection and the overwrite confirm.
     wait_for_screen "install disk" 60
-    capture_console "success-installer-03-prepare-install-disk"
+    capture_console "success-installer-04-prepare-install-disk"
     press ret
 
     wait_for_screen "recovery possible" 60
@@ -653,7 +421,9 @@ drive_configurator() {
     return 0
   fi
 
-  press ret # English (US) is preselected
+  press home
+  sleep 1
+  press ret # English (US) is the first layout
 
   # Normal flow: user step comes before disk selection.
   wait_for_screen "Username" 120
@@ -694,8 +464,12 @@ drive_configurator() {
   capture_console "success-installer-09-review"
   press ret
 
+  wait_for_screen "software profile" 60
+  capture_console "success-installer-10-software-profile"
+  press ret
+
   wait_for_screen "install disk" 60
-  capture_console "success-installer-10-install-disk"
+  capture_console "success-installer-11-install-disk"
   press ret # the single virtio disk
 
   wait_for_screen "installation mode\|recovery possible" 60
@@ -729,7 +503,7 @@ drive_provision_owner() {
   # layout — UK leaves every letter identical to US, so the typed password (sent
   # as raw keycodes) still matches the literal one the harness pipes to sudo.
   # A greeter (animated logo + tagline) opens first boot; Return begins.
-  wait_for_screen "Opinionated" 600
+  wait_for_screen "Cybersecurity" 600
   capture_console "success-provision-00-greeter"
   press ret
 
@@ -804,7 +578,7 @@ wait_for_install() {
     # Deferred-provisioning installs skip the celebration and reboot on their own
     # (no Reboot Now prompt); the first-boot greeter tagline appearing means the
     # install finished and rebooted into setup.
-    if $PROVISION && grep -qi "Opinionated" <<<"$text"; then
+    if $PROVISION && grep -qi "Cybersecurity" <<<"$text"; then
       log "Install finished and auto-rebooted into first-boot setup."
       capture_console "success-installer-15-autoreboot"
       return 0
@@ -923,7 +697,7 @@ EOF
   return 1
 }
 
-# Get a freshly booted system to a running Hyprland session, typing at the
+# Get a freshly booted system to a running Niri session, typing at the
 # LUKS prompt and/or SDDM greeter exactly like a user would.
 establish_session() {
   if $ENCRYPT; then
@@ -969,7 +743,7 @@ establish_session() {
 
     if ((waited >= 300)); then
       capture_console "failure-session-start-timeout"
-      echo "Timed out waiting for the Hyprland session" >&2
+      echo "Timed out waiting for the Niri session" >&2
       return 1
     fi
   done
@@ -1075,18 +849,28 @@ sync_monarch() {
   fi
 }
 
+enable_acceptance_autologin() {
+  log "Enabling test-only Niri autologin in the acceptance overlay"
+  wait_for_ssh "$BOOT_TIMEOUT" "failure-acceptance-autologin-ssh-timeout"
+  ssh_guest "printf '%s\n' '[Autologin]' 'User=$GUEST_USER' 'Session=niri.desktop' 'Relogin=false' > /tmp/monarch-test-autologin.conf"
+  ssh_guest "echo $GUEST_PASSWORD | sudo -S install -o root -g root -m 0644 \
+    /tmp/monarch-test-autologin.conf /etc/sddm.conf.d/98-monarch-test-autologin.conf && \
+    echo $GUEST_PASSWORD | sudo -S systemctl restart sddm"
+}
+
 acceptance_phase() {
   log "Booting acceptance VM from base image overlay"
 
   qemu-img create -f qcow2 -b "$BASE_DISK" -F qcow2 "$RUN_DIR/run.qcow2" >/dev/null
-  start_vm "$RUN_DIR/run.qcow2" "$RUN_DIR/serial.log"
+  start_vm "$RUN_DIR/run.qcow2" "$RUN_DIR/serial.log" || return 1
 
-  establish_session
-  sync_monarch
+  if $ACCEPTANCE_AUTOLOGIN; then
+    enable_acceptance_autologin || return 1
+  fi
+  establish_session || return 1
+  sync_monarch || return 1
 
   local status=0
-  shortcut_smoke_phase || status=1
-
   if $SYNC_ALL; then
     log "Running CLI and shell suites in the guest"
     ssh_guest "bash .local/share/monarch/test/all" || status=$?

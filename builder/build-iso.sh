@@ -158,6 +158,7 @@ mapfile -t all_packages < <(
     grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-base.packages"
     grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-other.packages"
     grep -hv '^#\|^$' /builder/archinstall.packages
+    grep -hv '^#\|^$' /builder/target-bootstrap.packages
     printf '%s\n' monarch monarch-settings
   } | sort -u
 )
