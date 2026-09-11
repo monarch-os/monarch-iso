@@ -43,6 +43,12 @@ grep -qF 'for package_name in monarch-settings monarch' "$root/builder/build-mon
 grep -qF 'resolve_expected_packages' "$root/builder/build-iso.sh"
 grep -qF 'pacman-offline.conf' "$root/builder/build-iso.sh"
 
+mirror_block=$(sed -n '/mapfile -t all_packages/,/^)/p' "$root/builder/build-iso.sh")
+if ! grep -qF '/builder/target-bootstrap.packages' <<<"$mirror_block"; then
+  echo "target bootstrap packages are missing from the offline mirror" >&2
+  exit 1
+fi
+
 target_block=$(sed -n '/mapfile -t target_packages/,/^)/p' "$root/builder/build-iso.sh")
 grep -qF '/builder/target-bootstrap.packages' <<<"$target_block"
 if grep -qF '/builder/archinstall.packages' <<<"$target_block"; then
