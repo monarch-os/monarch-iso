@@ -1,8 +1,9 @@
 # Unconditional target packages installed outside monarch-base.packages.
-# Keep this aligned with archinstall's minimal/zram/application transactions
-# and phases_impl.py's ordered early-package transactions. Hardware-conditional
-# and live-only packages belong in archinstall.packages, not here.
+# The phase markers also drive phases_impl.py's ordered early transactions;
+# keep them stable and put each package in the phase that first installs it.
+# Hardware-conditional and live-only packages belong in archinstall.packages.
 
+# phase:archinstall
 base
 sudo
 linux-firmware
@@ -10,15 +11,23 @@ mkinitcpio
 linux-cachyos
 btrfs-progs
 zram-generator
+
+# phase:early-base
 base-devel
 git
 limine
 efibootmgr
 monarch-keyring
+
+# phase:early-runtime
 monarch-settings
 monarch
+
+# phase:early-luarocks
 lua51
 luarocks
+
+# phase:pipewire
 pipewire
 pipewire-alsa
 pipewire-jack

@@ -94,7 +94,7 @@ if /usr/local/bin/monarch-cidata-load; then
 else
   cidata_status=$?
   if (( cidata_status == 2 )); then
-    echo "Refusing unsupported legacy cidata; regenerate it with monarch-iso-cidata." >&2
+    echo "Refusing unsupported cidata configuration; regenerate it with monarch-iso-cidata." >&2
     exit 2
   fi
   ./configurator

@@ -65,7 +65,7 @@ run_load() {
 }
 
 write_required_pair() {
-  echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json"
+  echo '{"monarch_install":{"schema_version":1,"mode":"full_disk"},"bootloader_config":{"bootloader":"Limine"},"disk_config":{"config_type":"default_layout","device_modifications":[{"device":"/dev/vda","wipe":true}]}}' >"$sandbox/media/user_configuration.json"
   echo '{"users": []}' >"$sandbox/media/user_credentials.json"
 }
 
@@ -128,7 +128,8 @@ pass "present optional files are copied, absent ones skipped"
 # creation to first boot, so imaging rigs ship no credentials at all.
 new_sandbox
 attach_drive cidata
-echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json"
+write_required_pair
+rm "$sandbox/media/user_credentials.json"
 : >"$sandbox/media/defer-provisioning"
 run_load || fail "config plus defer-provisioning marker loads"
 [[ -f $sandbox/root/defer-provisioning ]] || fail "defer-provisioning marker is copied"
@@ -144,6 +145,27 @@ write_required_pair
 run_load || fail "defer-provisioning marker plus credentials loads"
 [[ -f $sandbox/root/defer-provisioning && -f $sandbox/root/user_credentials.json ]] || fail "both defer-provisioning marker and credentials are copied"
 pass "defer-provisioning marker plus credentials copies both"
+
+# cidata is intentionally a whole-disk automation interface. Protected-mode
+# ownership is created interactively in this boot and must never be accepted
+# from removable media as authority to remove existing partitions on failure.
+new_sandbox
+attach_drive cidata
+write_required_pair
+python3 - "$sandbox/media/user_configuration.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+config = json.loads(path.read_text())
+config["monarch_install"]["mode"] = "protected"
+config["disk_config"]["config_type"] = "pre_mounted_config"
+path.write_text(json.dumps(config))
+PY
+! run_load || fail "protected cidata is rejected"
+[[ ! -e $sandbox/root/user_configuration.json ]] || fail "protected cidata copies nothing"
+pass "protected mode cannot claim rollback ownership through cidata"
 
 # An defer-provisioning marker without the configuration is still not an autoinstall drive.
 new_sandbox

@@ -50,10 +50,18 @@ done
 
 loaded=1
 if [[ -f $mnt/user_configuration.json ]] && [[ -f $mnt/user_credentials.json || -f $mnt/defer-provisioning ]]; then
-  # A historical Monarch cidata pair is recognizable but unsafe to reinterpret:
-  # regenerate it so the install intent is explicit and versioned.
-  if ! jq -e '.monarch_install.schema_version == 1' "$mnt/user_configuration.json" >/dev/null 2>&1; then
-    echo "Unsupported legacy cidata: regenerate it with monarch-iso-cidata." >&2
+  # cidata is the whole-disk automation interface emitted by
+  # monarch-iso-cidata. Protected installs derive rollback ownership from
+  # partitions created interactively during this boot; removable media must
+  # never be able to claim existing partitions as ours.
+  if ! jq -e '
+    .monarch_install.schema_version == 1 and
+    .monarch_install.mode == "full_disk" and
+    .bootloader_config.bootloader == "Limine" and
+    .disk_config.config_type == "default_layout" and
+    ([.disk_config.device_modifications[]? | select(.wipe == true)] | length) == 1
+  ' "$mnt/user_configuration.json" >/dev/null 2>&1; then
+    echo "Unsupported cidata configuration: regenerate it with monarch-iso-cidata." >&2
     loaded=2
     umount "$mnt"
     exit $loaded

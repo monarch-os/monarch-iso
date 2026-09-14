@@ -77,9 +77,9 @@ disk_step() {
   _disk_abort "$desc failed (exit $status)"
 }
 
-# Create one partition and report the number parted actually assigned.
-# Returns non-zero without touching created_parts if anything looks wrong;
-# the caller decides how loudly to fail.
+# Create one partition and report the number parted actually assigned. As soon
+# as the new GPT slot is identified it belongs to this run, even if a later
+# size/name validation fails; the caller can then roll it back safely.
 create_partition() {
   local disk="$1" start="$2" end="$3" fstype="$4" name="$5"
   local before after num actual want tolerance
@@ -104,6 +104,8 @@ create_partition() {
   # which would false-positive on remnants left in freed space.
   grep -qx "$num" <<<"$before" && return 1
 
+  created_parts+=("$num")
+
   actual=$(partition_size_bytes "$disk" "$num")
   [[ -n $actual ]] || return 1
   want=$((end - start))
@@ -112,7 +114,6 @@ create_partition() {
 
   parted --script "$disk" name "$num" "$name" || true
 
-  created_parts+=("$num")
   created_partition_number="$num"
 }
 

@@ -20,7 +20,7 @@ When porting anything from `omarchy-iso`, assume every `archlinux`, `linux-t2`, 
 | `builder/build-iso.sh` | Runs **inside** the CachyOS container; assembles airootfs and calls `mkarchiso` |
 | `builder/archinstall.packages` | Extra packages fed to the offline mirror for archinstall itself |
 | `builder/prune-offline-mirror.sh` | Trims the offline mirror to the exact resolved transaction before indexing |
-| `test/` | `bash test/<name>-test.sh`; no framework, no container needed |
+| `test/` | `./test/all` runs the fast VM-free Bash and Python `unittest` suites; standalone compatibility scripts remain runnable with `bash test/<name>-test.sh` |
 | `configs/` | Overlaid on top of `archiso/configs/releng/` — boot entries, pacman configs, `profiledef.sh`, airootfs |
 | `configs/airootfs/root/configurator` | The `gum` TUI the user sees at boot; collects the answers |
 | `configs/airootfs/root/write-install-config` | Turns those answers into the archinstall input files; shared with `bin/monarch-iso-cidata` |
@@ -66,6 +66,8 @@ installs without an account and hands owner creation to first boot.
 `user_full_name.txt`, `user_email_address.txt`, `authorized_keys` and
 `tailscale_authkey` are optional. Build a drive with `bin/monarch-iso-cidata`
 and attach it with `MONARCH_VM_CIDATA=cidata.iso ./bin/monarch-iso-boot`.
+The cidata interface is full-disk only; protected free-space rollback ownership
+is created interactively during the current boot and is rejected from media.
 
 The helper does not carry its own copy of the schema: `write-install-config`
 holds the generation, and the configurator sources it too. That is the whole
@@ -165,6 +167,7 @@ supplied checkouts instead.
 A full build takes a long time and downloads several GB. Before rebuilding, cheap checks that catch most mistakes:
 
 - `bash -n` on every script you touched
+- `./test/all` — all fast Bash unit suites plus the Python orchestrator tests
 - `bash test/prune-offline-mirror-test.sh`, `bash test/cidata-load-test.sh`, `bash test/install-config-test.sh`, `bash test/vm-snapshot-test.sh` — the test suites here; each runs in a tempdir and needs no container
 - The configurator has a dry-run: `bash configs/airootfs/root/configurator dry` renders the TUI and prints the generated JSON without touching a disk (needs `gum` on the host)
 - `jq empty user_configuration.json` on that dry-run output — a malformed heredoc silently breaks the install otherwise

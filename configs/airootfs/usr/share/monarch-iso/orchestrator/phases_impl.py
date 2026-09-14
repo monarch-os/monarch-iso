@@ -55,39 +55,37 @@ def _iso_ref() -> str:
     return "dev"
 
 
-# Packages installed BEFORE useradd. monarch-settings owns /etc/skel and the
-# static system defaults; monarch owns the target-side setup commands.
-EARLY_BOOTSTRAP_BASE_PACKAGES = [
-    "base-devel",
-    "git",
-    "limine",
-    "efibootmgr",
-    "monarch-keyring",
-]
+TARGET_BOOTSTRAP_PACKAGES = Path("/usr/share/monarch-iso/target-bootstrap.packages")
 
-# Install LuaRocks before monarch-nvim pulls in lua51-lpeg. Arch's lua-luarocks
-# post_install script tries to rebuild manifests for existing rocks trees before
-# the unversioned luarocks-admin command exists if both arrive in the wrong
-# transaction order. Splitting this transaction avoids the harmless but noisy
-# "luarocks-admin: command not found" line during ISO installs.
-EARLY_LUAROCKS_PACKAGES = [
-    "lua51",
-    "luarocks",
-]
+
+def _target_bootstrap_group(name: str) -> list[str]:
+    """Read one ordered install phase from the build's canonical package list."""
+    marker = f"# phase:{name}"
+    active = False
+    packages: list[str] = []
+    for raw_line in TARGET_BOOTSTRAP_PACKAGES.read_text().splitlines():
+        line = raw_line.strip()
+        if line.startswith("# phase:"):
+            active = line == marker
+            continue
+        if active and line and not line.startswith("#"):
+            packages.append(line)
+    if not packages:
+        raise RuntimeError(f"target bootstrap package phase is empty or missing: {name}")
+    return packages
 
 
 def _early_bootstrap_packages() -> list[str]:
     return [
-        *EARLY_BOOTSTRAP_BASE_PACKAGES,
-        "monarch-settings",
-        "monarch",
+        *_target_bootstrap_group("early-base"),
+        *_target_bootstrap_group("early-runtime"),
     ]
 
 
 def _early_packages() -> list[str]:
     return [
         *_early_bootstrap_packages(),
-        *EARLY_LUAROCKS_PACKAGES,
+        *_target_bootstrap_group("early-luarocks"),
     ]
 
 
@@ -356,7 +354,7 @@ def _install_limine_efi(
     _write_limine_pacman_hook(ctx.target, hook_command)
 
     loader = "\\" + str(Path(esp_path) / efi_binary).strip("/").replace("/", "\\")
-    _register_limine_efi_entry(disk, part, loader, pre_state=pre_state)
+    _register_limine_efi_entry(disk, part, loader, ctx=ctx, pre_state=pre_state)
 
 
 def _register_limine_efi_entry(
@@ -364,16 +362,10 @@ def _register_limine_efi_entry(
     part: int,
     loader: str,
     *,
+    ctx: InstallContext | None = None,
     pre_state: dict | None = None,
 ) -> None:
     pre_state = pre_state or _read_efibootmgr()
-    stale_limine = _find_label_entries(pre_state["entries"], "Limine")
-    for num in stale_limine:
-        subprocess.run(
-            ["efibootmgr", "--bootnum", num, "--delete-bootnum"],
-            check=False, capture_output=True,
-        )
-
     subprocess.run(
         [
             "efibootmgr",
@@ -389,16 +381,26 @@ def _register_limine_efi_entry(
     )
 
     post_state = _read_efibootmgr()
-    new_limine = _find_label_entries(post_state["entries"], "Limine")
+    new_entries = {
+        num: label
+        for num, label in post_state["entries"].items()
+        if num not in pre_state["entries"]
+    }
+    new_limine = _find_label_entries(new_entries, "Limine")
     if not new_limine:
-        raise RuntimeError("efibootmgr --create reported success but no Limine entry found")
+        raise RuntimeError("efibootmgr --create reported success but no new Limine entry found")
     limine_num = new_limine[0]
+
+    if ctx is not None:
+        ctx.state["efi_boot_rollback"] = {
+            "created_entry": limine_num,
+            "previous_order": pre_state["order"],
+        }
 
     keep = [
         num
         for num in pre_state["order"]
-        if num not in stale_limine
-        and num != limine_num
+        if num != limine_num
         and num in pre_state["entries"]
     ]
     subprocess.run(
@@ -561,12 +563,16 @@ def _drop_archinstall_zram_conf(ctx: InstallContext) -> None:
 
 def _install_early_packages(installer) -> None:
     bootstrap_packages = _early_bootstrap_packages()
+    luarocks_packages = _target_bootstrap_group("early-luarocks")
 
     info(f"› installing early Monarch packages: {', '.join(bootstrap_packages)}")
     installer.add_additional_packages(bootstrap_packages)
 
-    info(f"› installing LuaRocks prerequisites: {', '.join(EARLY_LUAROCKS_PACKAGES)}")
-    installer.add_additional_packages(EARLY_LUAROCKS_PACKAGES)
+    # Install LuaRocks before monarch-nvim pulls in lua51-lpeg. Arch's
+    # lua-luarocks post_install rebuilds existing manifests before the
+    # unversioned luarocks-admin exists if both arrive in one transaction.
+    info(f"› installing LuaRocks prerequisites: {', '.join(luarocks_packages)}")
+    installer.add_additional_packages(luarocks_packages)
 
 
 def _mount_offline_package_cache(ctx: InstallContext) -> None:
@@ -1896,6 +1902,8 @@ def cleanup_protected_state(ctx: InstallContext) -> None:
     if not ctx.is_protected:
         return
 
+    _rollback_protected_efi_entry(ctx)
+
     subprocess.run(["umount", "-R", str(ctx.target)], check=False, capture_output=True)
     if Path("/dev/mapper/monarch_root").exists():
         subprocess.run(
@@ -1920,6 +1928,38 @@ def cleanup_protected_state(ctx: InstallContext) -> None:
             capture_output=True,
         )
     subprocess.run(["partprobe", disk], check=False, capture_output=True)
+
+
+def _rollback_protected_efi_entry(ctx: InstallContext) -> None:
+    rollback = ctx.state.pop("efi_boot_rollback", None)
+    if not isinstance(rollback, dict):
+        return
+
+    created_entry = rollback.get("created_entry")
+    previous_order = rollback.get("previous_order")
+    if not isinstance(created_entry, str) or not re.fullmatch(
+        r"[0-9A-Fa-f]{4}", created_entry
+    ):
+        return
+
+    subprocess.run(
+        ["efibootmgr", "--bootnum", created_entry, "--delete-bootnum"],
+        check=False,
+        capture_output=True,
+    )
+    if (
+        isinstance(previous_order, list)
+        and previous_order
+        and all(
+            isinstance(num, str) and re.fullmatch(r"[0-9A-Fa-f]{4}", num)
+            for num in previous_order
+        )
+    ):
+        subprocess.run(
+            ["efibootmgr", "--bootorder", ",".join(previous_order)],
+            check=False,
+            capture_output=True,
+        )
 
 
 def _valid_protected_rollback(disk: object, partitions: object) -> bool:

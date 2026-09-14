@@ -42,6 +42,15 @@ fi
 grep -qF 'for package_name in monarch-settings monarch' "$root/builder/build-monarch-package.sh"
 grep -qF 'resolve_expected_packages' "$root/builder/build-iso.sh"
 grep -qF 'pacman-offline.conf' "$root/builder/build-iso.sh"
+grep -qF 'cp /builder/target-bootstrap.packages "$build_cache_dir/airootfs/usr/share/monarch-iso/' \
+  "$root/builder/build-iso.sh"
+
+orchestrator="$root/configs/airootfs/usr/share/monarch-iso/orchestrator/phases_impl.py"
+grep -qF 'TARGET_BOOTSTRAP_PACKAGES' "$orchestrator"
+if grep -qF 'EARLY_BOOTSTRAP_BASE_PACKAGES = [' "$orchestrator"; then
+  echo "early bootstrap packages are duplicated outside target-bootstrap.packages" >&2
+  exit 1
+fi
 
 mirror_block=$(sed -n '/mapfile -t all_packages/,/^)/p' "$root/builder/build-iso.sh")
 if ! grep -qF '/builder/target-bootstrap.packages' <<<"$mirror_block"; then
@@ -68,7 +77,7 @@ if grep -qF 'monarch-other.packages' <<<"$target_block"; then
 fi
 
 runtime_package_list=$(sed -n '/def _runtime_package_list/,/^$/p' \
-  "$root/configs/airootfs/usr/share/monarch-iso/orchestrator/phases_impl.py")
+  "$orchestrator")
 grep -qF 'monarch-base.packages' <<<"$runtime_package_list"
 if grep -qF 'monarch-other.packages' <<<"$runtime_package_list"; then
   echo "hardware-conditional packages leak into the target install transaction" >&2

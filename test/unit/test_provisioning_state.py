@@ -507,6 +507,7 @@ class ProtectedInstallCleanupTest(unittest.TestCase):
             is_protected=True,
             target=Path("/mnt"),
             monarch_install={"storage": storage},
+            state={},
         )
 
     def test_failure_removes_only_the_created_partitions_in_reverse_order(self):
@@ -540,6 +541,30 @@ class ProtectedInstallCleanupTest(unittest.TestCase):
                 self.calls.clear()
                 phases_impl.cleanup_protected_state(self.ctx(storage))
                 self.assertFalse(any(cmd[0] in ("parted", "partprobe") for cmd in self.calls))
+
+    def test_failure_removes_only_this_runs_efi_entry_and_restores_boot_order(self):
+        ctx = self.ctx({})
+        ctx.state["efi_boot_rollback"] = {
+            "created_entry": "0003",
+            "previous_order": ["0002", "0001"],
+        }
+
+        phases_impl.cleanup_protected_state(ctx)
+        phases_impl.cleanup_protected_state(ctx)
+
+        self.assertEqual(
+            self.calls.count(
+                ["efibootmgr", "--bootnum", "0003", "--delete-bootnum"]
+            ),
+            1,
+        )
+        self.assertIn(["efibootmgr", "--bootorder", "0002,0001"], self.calls)
+        self.assertFalse(
+            any(
+                command[:4] == ["efibootmgr", "--bootnum", "0001", "--delete-bootnum"]
+                for command in self.calls
+            )
+        )
 
 
 if __name__ == "__main__":

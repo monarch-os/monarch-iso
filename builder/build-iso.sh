@@ -110,6 +110,7 @@ cp "$runtime_share/install/monarch-base.packages" "$build_cache_dir/airootfs/usr
 cp "$runtime_share/install/monarch-other.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/monarch-preinstalls.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/provisioning/setup-form.sh" "$build_cache_dir/airootfs/usr/share/monarch-iso/setup-form.sh"
+cp /builder/target-bootstrap.packages "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/logo.txt" "$build_cache_dir/airootfs/usr/share/monarch/logo.txt"
 cp "$runtime_share/bin/monarch-upload-log" "$build_cache_dir/airootfs/usr/local/bin/monarch-upload-log"
 cp -r "$runtime_share/default/plymouth/"* "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch/"

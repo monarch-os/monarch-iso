@@ -15,6 +15,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,6 +95,45 @@ class CommandCaptureTest(unittest.TestCase):
         self.assertEqual(state["order"], ["2001", "0003", "0000"])
         self.assertEqual(phases_impl._find_label_entries(state["entries"], "Monarch"), ["0003"])
         self.assertTrue(state["entries"]["0000"].startswith("Notebook Hard Drive"))
+
+    def test_registering_monarch_never_deletes_foreign_limine_entries(self):
+        pre_state = {
+            "entries": {
+                "0001": "Limine\tHD(1,GPT,foreign)/File(\\EFI\\limine\\limine_x64.efi)",
+                "0002": "Windows Boot Manager\tHD(1,GPT,windows)",
+            },
+            "order": ["0002", "0001"],
+        }
+        post_state = {
+            "entries": {
+                **pre_state["entries"],
+                "0003": "Limine\tHD(3,GPT,monarch)/File(\\EFI\\limine\\limine_x64.efi)",
+            },
+            "order": ["0003", "0002", "0001"],
+        }
+        ctx = types.SimpleNamespace(state={})
+
+        with (
+            mock.patch.object(phases_impl, "_read_efibootmgr", return_value=post_state),
+            mock.patch.object(
+                phases_impl.subprocess,
+                "run",
+                return_value=CompletedProcess([], 0, stdout="", stderr=""),
+            ) as run,
+        ):
+            phases_impl._register_limine_efi_entry(
+                Path("/dev/nvme0n1"), 3, "\\EFI\\limine\\limine_x64.efi",
+                ctx=ctx,
+                pre_state=pre_state,
+            )
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertFalse(any("--delete-bootnum" in command for command in commands))
+        self.assertIn(["efibootmgr", "--bootorder", "0003,0002,0001"], commands)
+        self.assertEqual(
+            ctx.state["efi_boot_rollback"],
+            {"created_entry": "0003", "previous_order": ["0002", "0001"]},
+        )
 
     def test_a_mangled_identifier_stops_the_install_rather_than_reaching_fstab(self):
         # _validate_pre_mounted_filesystems reads the UUID back from this same

@@ -124,11 +124,25 @@ create_partition "$IMG" "$((100 * MIB))" "$((300 * MIB))" ext4 OVERLAP
 check "overlapping creation failed" "1" "$?"
 check "nothing tracked" "0" "${#created_parts[@]}"
 
+echo "==> a created partition remains rollback-owned if validation fails"
+created_parts=()
+real_partition_size_bytes=$(declare -f partition_size_bytes)
+partition_size_bytes() { return 1; }
+create_partition "$IMG" "$((1300 * MIB))" "$((1500 * MIB))" ext4 INVALID_SIZE
+check "post-create validation failed" "1" "$?"
+check "the new partition is still tracked" "4" "${created_parts[*]}"
+eval "$real_partition_size_bytes"
+rollback_created_parts "$IMG"
+check "rollback removes the failed creation" "1 2 3" \
+  "$(partition_numbers "$IMG" | sort | tr '\n' ' ' | sed 's/ $//')"
+
 echo "==> rollback ownership crosses the configurator handoff"
 CONFIGURATOR="$ROOT/configs/airootfs/root/configurator"
+CONFIG_WRITER="$ROOT/configs/airootfs/root/write-install-config"
 grep -qF 'rollback_partitions_json="[$efi_part_num, $root_part_num]"' "$CONFIGURATOR"
 check "created numbers are serialized" "0" "$?"
-grep -qF '"created_partitions": $rollback_partitions_json' "$CONFIGURATOR"
+grep -qF 'write_protected_install_config' "$CONFIGURATOR" &&
+  grep -qF '"created_partitions": $rollback_partitions_json' "$CONFIG_WRITER"
 check "rollback metadata reaches the orchestrator config" "0" "$?"
 
 if (( failures > 0 )); then

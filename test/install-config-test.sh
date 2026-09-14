@@ -11,6 +11,7 @@ set -uo pipefail
 
 TEST_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 GENERATOR="$TEST_ROOT/configs/airootfs/root/write-install-config"
+CONFIGURATOR="$TEST_ROOT/configs/airootfs/root/configurator"
 HELPER="$TEST_ROOT/bin/monarch-iso-cidata"
 
 failures=0
@@ -50,6 +51,53 @@ generate() {
     source "$GENERATOR"
   )
 }
+
+generate_protected() {
+  local outdir="$work/protected"
+  mkdir -p "$outdir"
+  (
+    cd "$outdir" || exit 1
+    WRITE_INSTALL_CONFIG_LIBRARY_ONLY=true
+    source "$GENERATOR"
+    disk=/dev/nvme0n1
+    username=jeff
+    password=hunter2
+    password_hash='$6$fake$hash'
+    full_name="Jeff Doe"
+    email_address=jeff@example.com
+    hostname=monarch
+    timezone=Europe/Paris
+    keyboard=fr
+    encrypt_installation=true
+    include_preinstalls=true
+    esp_mount_in_target=/boot
+    efi_dev=/dev/nvme0n1p2
+    root_partition_device=/dev/nvme0n1p3
+    root_mapper=/dev/mapper/monarch_root
+    luks_uuid_json='"00000000-0000-0000-0000-000000000001"'
+    rollback_partitions_json='[2, 3]'
+    kernel_choice=linux-cachyos
+    write_install_user_files
+    write_protected_install_config
+  )
+}
+
+echo "the configurator and cidata share one schema writer"
+assert "the wizard sources the canonical writer" \
+  grep -qF 'source "${BASH_SOURCE[0]%/*}/write-install-config"' "$CONFIGURATOR"
+assert "the wizard carries no embedded bootloader schema" \
+  test "$(grep -cF '"bootloader_config"' "$CONFIGURATOR")" -eq 0
+assert "both install modes call the shared writer" \
+  bash -c 'grep -qF write_full_disk_install_config "$1" && grep -qF write_protected_install_config "$1"' \
+  _ "$CONFIGURATOR"
+
+generate_protected
+assert "the protected writer emits valid JSON" jq empty "$work/protected/user_configuration.json"
+assert "the protected writer carries bounded rollback ownership" \
+  jq_e '.monarch_install.mode == "protected"
+    and .monarch_install.storage.disk == "/dev/nvme0n1"
+    and .monarch_install.storage.created_partitions == [2, 3]' \
+  "$work/protected/user_configuration.json"
 
 echo "an encrypted install writes valid archinstall inputs"
 generate encrypted true
@@ -144,7 +192,9 @@ assert "the drive normalizes the Tailscale auth key" \
   test "$(cat "$work/extracted/tailscale_authkey")" = "tskey-auth-kFAKEKEY"
 assert "the flags reached the configuration" \
   jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"
-    and .monarch_install.include_preinstalls == false' \
+    and .monarch_install.include_preinstalls == false
+    and .bootloader_config.bootloader == "Limine"
+    and (has("bootloader") | not)' \
   "$work/extracted/user_configuration.json"
 assert "the size flag reached the partition table" \
   jq_e '[.disk_config.device_modifications[0].partitions[].size.value] | add < (24 * 1024 * 1024 * 1024)' \

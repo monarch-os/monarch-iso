@@ -69,7 +69,7 @@ run_load() {
 }
 
 write_required_pair() {
-  echo '{"monarch_install":{"schema_version":1},"disk_config":{}}' >"$sandbox/media/user_configuration.json"
+  echo '{"monarch_install":{"schema_version":1,"mode":"full_disk"},"bootloader_config":{"bootloader":"Limine"},"disk_config":{"config_type":"default_layout","device_modifications":[{"device":"/dev/vda","wipe":true}]}}' >"$sandbox/media/user_configuration.json"
   echo '{"users": [{"username": "jeff"}]}' >"$sandbox/media/user_credentials.json"
 }
 
@@ -114,6 +114,25 @@ run_load
 assert "exits zero" test "$status" -eq 0
 assert "copies the optional file that is present" test -f "$sandbox/root/authorized_keys"
 assert "copies no optional file that is absent" test ! -e "$sandbox/root/user_full_name.txt"
+
+echo "protected mode cannot claim rollback ownership through cidata"
+new_sandbox
+attach_drive cidata
+write_required_pair
+python3 - "$sandbox/media/user_configuration.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+config = json.loads(path.read_text())
+config["monarch_install"]["mode"] = "protected"
+config["disk_config"]["config_type"] = "pre_mounted_config"
+path.write_text(json.dumps(config))
+PY
+run_load
+assert "exits non-zero" test "$status" -ne 0
+assert "copies nothing" test ! -e "$sandbox/root/user_configuration.json"
 
 echo "half the required pair is not an autoinstall drive"
 new_sandbox
