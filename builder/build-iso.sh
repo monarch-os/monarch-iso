@@ -45,18 +45,32 @@ if [[ ${MONARCH_INSTALL_DEBUG:-} == 1 ]]; then
   touch "$build_cache_dir/airootfs/usr/share/monarch-iso/install-debug"
 fi
 
-# Build the runtime and settings packages from the two mounted checkouts in
-# local-source builds. Normal builds bootstrap the published pair below.
-local_monarch_build=""
-if [[ -d /monarch-source && -d /monarch-pkgs ]]; then
-  bash /builder/build-monarch-package.sh "$offline_mirror_dir"
-  local_monarch_build=1
+# Always build the runtime pair from the requested source. Local-source builds
+# supply read-only mounts; normal builds clone the validated refs passed by the
+# host. This keeps MONARCH_INSTALLER_REF truthful instead of merely putting a
+# branch name on an ISO assembled from whatever packages are currently published.
+if [[ -d /monarch-source || -d /monarch-pkgs ]]; then
+  [[ -d /monarch-source && -d /monarch-pkgs ]] || {
+    echo "ERROR: local-source builds require both /monarch-source and /monarch-pkgs" >&2
+    exit 1
+  }
+else
+  rm -rf /monarch-source /monarch-pkgs
+  # Keep runtime history and reachable tags: source-package-version.sh uses
+  # git describe/rev-list, and a depth-1 clone would collapse every branch to
+  # an artificial 0.r1.<sha> package version.
+  git clone --branch "${MONARCH_INSTALLER_REF:-dev}" \
+    "${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}" /monarch-source
+  git clone --depth 1 --branch "${MONARCH_PKGS_REF:-main}" \
+    "${MONARCH_PKGS_REPO:-https://github.com/monarch-os/monarch-pkgs.git}" /monarch-pkgs
+  export MONARCH_LOCAL_PKGVER
+  MONARCH_LOCAL_PKGVER=$(bash /builder/source-package-version.sh /monarch-source)
 fi
+bash /builder/build-monarch-package.sh "$offline_mirror_dir"
 
-bootstrap_dir=/tmp/monarch-runtime-bootstrap
 runtime_root=/tmp/monarch-runtime-root
-rm -rf "$bootstrap_dir" "$runtime_root" /tmp/offlinedb-bootstrap
-mkdir -p "$bootstrap_dir" "$runtime_root" /tmp/offlinedb-bootstrap
+rm -rf "$runtime_root"
+mkdir -p "$runtime_root"
 
 find_exact_package() {
   local package_dir=$1 package_name=$2 candidate
@@ -71,15 +85,8 @@ find_exact_package() {
   return 1
 }
 
-if [[ -n $local_monarch_build ]]; then
-  runtime_package=$(find_exact_package "$offline_mirror_dir" monarch || true)
-  settings_package=$(find_exact_package "$offline_mirror_dir" monarch-settings || true)
-else
-  pacman --config /configs/pacman-online.conf --noconfirm -Syw monarch monarch-settings \
-    --cachedir "$bootstrap_dir" --dbpath /tmp/offlinedb-bootstrap >/dev/null
-  runtime_package=$(find_exact_package "$bootstrap_dir" monarch || true)
-  settings_package=$(find_exact_package "$bootstrap_dir" monarch-settings || true)
-fi
+runtime_package=$(find_exact_package "$offline_mirror_dir" monarch || true)
+settings_package=$(find_exact_package "$offline_mirror_dir" monarch-settings || true)
 [[ -n $runtime_package ]] || { echo "ERROR: Monarch runtime package not found" >&2; exit 1; }
 [[ -n $settings_package ]] || { echo "ERROR: Monarch settings package not found" >&2; exit 1; }
 bsdtar -xf "$runtime_package" -C "$runtime_root"
@@ -163,9 +170,7 @@ mapfile -t all_packages < <(
   } | sort -u
 )
 
-if [[ -n $local_monarch_build ]]; then
-  mapfile -t all_packages < <(printf '%s\n' "${all_packages[@]}" | grep -Fxv -e monarch -e monarch-settings)
-fi
+mapfile -t all_packages < <(printf '%s\n' "${all_packages[@]}" | grep -Fxv -e monarch -e monarch-settings)
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
@@ -201,10 +206,8 @@ if ! resolved_package_files="$(
 fi
 
 mapfile -t required_package_files <<<"$resolved_package_files"
-if [[ -n $local_monarch_build ]]; then
-  required_package_files+=("${runtime_package##*/}")
-  required_package_files+=("${settings_package##*/}")
-fi
+required_package_files+=("${runtime_package##*/}")
+required_package_files+=("${settings_package##*/}")
 
 printf '%s\n' "${required_package_files[@]}" |
   bash /builder/prune-offline-mirror.sh "$offline_mirror_dir"

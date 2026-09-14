@@ -689,7 +689,7 @@ run_partition_decide() {
 # the pre-mounted (protected) install configuration. Runs after the user step
 # so LUKS can be formatted with the user's password.
 run_partition_execute() {
-  local dry=false subvol
+  local dry=false subvol rollback_partitions_json="[]"
   [[ "${1:-}" == "dry" ]] && dry=true
 
   if $dry; then
@@ -786,6 +786,11 @@ run_partition_execute() {
       disk_abort_hook "Target /mnt is not mounted; not starting the installer"
     mountpoint -q "/mnt$esp_mount_in_target" ||
       disk_abort_hook "ESP is not mounted at /mnt$esp_mount_in_target"
+
+    # The Python orchestrator runs in a separate process, so carry forward the
+    # exact partitions this configurator invocation created. It uses this only
+    # on failure; successful installs keep both partitions.
+    rollback_partitions_json="[$efi_part_num, $root_part_num]"
   fi
 
   local luks_uuid_json="null" luks_uuid
@@ -819,10 +824,12 @@ run_partition_execute() {
             "enable_fallback": false
         },
         "storage": {
+            "disk": "$disk",
             "esp_device": "$efi_dev",
             "root_device": "$root_partition_device",
             "root_mapper": "$root_mapper",
             "luks_uuid": $luks_uuid_json,
+            "created_partitions": $rollback_partitions_json,
             "kernel": "$kernel_choice"
         }
     },

@@ -8,6 +8,7 @@ BUILD_RELEASE_PATH="$BUILD_ROOT/release"
 # The ref the ISO bundles. Overridable, but `dev` is the only long-lived branch
 # on monarch-os/monarch and is its default HEAD.
 INSTALLER_REF="${MONARCH_INSTALLER_REF:-dev}"
+INSTALLER_REF_SLUG="${INSTALLER_REF//\//-}"
 
 NO_MAKE=""
 BUILD_VERSION=""
@@ -53,10 +54,10 @@ else
 fi
 
 # monarch-iso-make names its output <date>-<arch>-<ref>.iso
-latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF".iso 2>/dev/null | head -n1 || true)
+latest_iso=$(\ls -t "$BUILD_RELEASE_PATH"/*x86_64-"$INSTALLER_REF_SLUG".iso 2>/dev/null | head -n1 || true)
 
 if [[ -z $latest_iso ]]; then
-  echo "No ISO matching $BUILD_RELEASE_PATH/*x86_64-$INSTALLER_REF.iso" >&2
+  echo "No ISO matching $BUILD_RELEASE_PATH/*x86_64-$INSTALLER_REF_SLUG.iso" >&2
   [[ -n $NO_MAKE ]] && echo "Drop --no-make to build one." >&2
   exit 1
 fi

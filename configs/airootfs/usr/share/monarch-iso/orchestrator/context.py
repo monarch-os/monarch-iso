@@ -108,7 +108,7 @@ class InstallContext:
             creds_path=creds_path,
             full_name=_read_text(os.environ.get("MONARCH_INSTALL_FULL_NAME_FILE")),
             email=_read_text(os.environ.get("MONARCH_INSTALL_EMAIL_FILE")),
-            encrypt=bool((user_configuration.get("disk_config") or {}).get("disk_encryption")),
+            encrypt=_configuration_is_encrypted(user_configuration, monarch_install),
             authorized_keys_path=_optional_path(os.environ.get("MONARCH_INSTALL_AUTHORIZED_KEYS_FILE")),
             tailscale_authkey_path=_optional_path(os.environ.get("MONARCH_INSTALL_TAILSCALE_AUTHKEY_FILE")),
             user_configuration=user_configuration,
@@ -161,6 +161,25 @@ def _strip_account_fields(arch_configuration: dict) -> None:
     if isinstance(auth, dict):
         for key in ("users", "root_enc_password"):
             auth.pop(key, None)
+
+
+def _configuration_is_encrypted(
+    user_configuration: dict, monarch_install: dict[str, Any]
+) -> bool:
+    """Return the effective storage encryption state for either install mode.
+
+    Full-disk installs ask archinstall to create LUKS and therefore describe it
+    in disk_config. Protected installs hand archinstall an already-open mapper;
+    their durable encryption intent is the LUKS UUID in monarch_install.storage.
+    """
+    if (monarch_install.get("storage") or {}).get("luks_uuid"):
+        return True
+
+    disk_encryption = (user_configuration.get("disk_config") or {}).get("disk_encryption")
+    return bool(
+        disk_encryption
+        and disk_encryption.get("encryption_type", "luks") != "no_encryption"
+    )
 
 
 def _inject_provisioning_encryption_password(arch_configuration: dict, user_credentials: dict) -> None:

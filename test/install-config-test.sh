@@ -112,20 +112,36 @@ run_helper --user jeff --key "$work/missing.pub"
 assert "a missing key file is refused" test "$status" -ne 0
 
 echo 'ssh-ed25519 AAAA jeff@host' >"$work/id.pub"
+
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/missing.tskey"
+assert "a missing Tailscale auth key file is refused" test "$status" -ne 0
+
+printf '# no key\n\n' >"$work/empty.tskey"
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/empty.tskey"
+assert "an empty Tailscale auth key file is refused" test "$status" -ne 0
+
+printf 'tskey-auth-kONE\ntskey-auth-kTWO\n' >"$work/multiple.tskey"
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/multiple.tskey"
+assert "multiple Tailscale auth keys are refused" test "$status" -ne 0
+
+printf '# deployment key\n  tskey-auth-kFAKEKEY  \n' >"$work/tailscale.key"
 run_helper --user jeff --key "$work/id.pub" --size 30Q
 assert "an unreadable size is refused" test "$status" -ne 0
 
 echo "the helper builds a drive the loader will recognise"
-run_helper --user jeff --key "$work/id.pub" --size 24G --hostname box \
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/tailscale.key" \
+  --size 24G --hostname box \
   --timezone UTC --keyboard us --no-preinstalls -o "$work/cidata.iso"
 assert "it succeeds" test "$status" -eq 0
 assert "the volume is labelled cidata" \
   bash -c "xorriso -indev '$work/cidata.iso' -pvd_info 2>/dev/null | grep -qi \"Volume Id *: cidata\""
 mkdir -p "$work/extracted"
 xorriso -osirrox on -indev "$work/cidata.iso" -extract / "$work/extracted" >/dev/null 2>&1
-for file in user_configuration.json user_credentials.json authorized_keys; do
+for file in user_configuration.json user_credentials.json authorized_keys tailscale_authkey; do
   assert "the drive carries $file" test -f "$work/extracted/$file"
 done
+assert "the drive normalizes the Tailscale auth key" \
+  test "$(cat "$work/extracted/tailscale_authkey")" = "tskey-auth-kFAKEKEY"
 assert "the flags reached the configuration" \
   jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"
     and .monarch_install.include_preinstalls == false' \

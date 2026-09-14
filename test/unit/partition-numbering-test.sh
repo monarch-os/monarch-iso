@@ -124,6 +124,13 @@ create_partition "$IMG" "$((100 * MIB))" "$((300 * MIB))" ext4 OVERLAP
 check "overlapping creation failed" "1" "$?"
 check "nothing tracked" "0" "${#created_parts[@]}"
 
+echo "==> rollback ownership crosses the configurator handoff"
+CONFIGURATOR="$ROOT/configs/airootfs/root/configurator"
+grep -qF 'rollback_partitions_json="[$efi_part_num, $root_part_num]"' "$CONFIGURATOR"
+check "created numbers are serialized" "0" "$?"
+grep -qF '"created_partitions": $rollback_partitions_json' "$CONFIGURATOR"
+check "rollback metadata reaches the orchestrator config" "0" "$?"
+
 if (( failures > 0 )); then
   printf '\n%d check(s) failed\n' "$failures"
   exit 1

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Preview the shipped Monarch installer dashboard without building an ISO.
 set -euo pipefail
 

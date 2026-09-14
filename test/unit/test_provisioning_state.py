@@ -172,6 +172,33 @@ class ContextDeferProvisioningTest(unittest.TestCase):
         ctx = self.from_env()
         self.assertNotIn("encryption_password", ctx.user_credentials)
 
+    def test_pre_mounted_luks_is_recognized_as_encrypted(self):
+        config = self.base_config()
+        config["monarch_install"].update({
+            "mode": "protected",
+            "storage": {"luks_uuid": "00000000-0000-0000-0000-000000000001"},
+        })
+        config["disk_config"] = {
+            "config_type": "pre_mounted_config",
+            "mountpoint": "/mnt",
+        }
+        self.write_config(config)
+        self.write_creds({"users": [{"username": "jeff"}]})
+
+        self.assertTrue(self.from_env().encrypt)
+
+    def test_pre_mounted_plain_storage_is_not_encrypted(self):
+        config = self.base_config()
+        config["monarch_install"].update({"mode": "protected", "storage": {}})
+        config["disk_config"] = {
+            "config_type": "pre_mounted_config",
+            "mountpoint": "/mnt",
+        }
+        self.write_config(config)
+        self.write_creds({"users": [{"username": "jeff"}]})
+
+        self.assertFalse(self.from_env().encrypt)
+
 
 def make_ctx(target, **overrides):
     defaults = dict(
@@ -459,6 +486,60 @@ class CreateFactorySnapshotTest(unittest.TestCase):
         self.findmnt["OPTIONS"] = "rw,noatime"
         phases_impl.create_factory_snapshot(self.ctx())
         self.assertFalse(any(cmd[0] == "mount" for cmd in self.calls))
+
+
+class ProtectedInstallCleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.calls = []
+        run_patch = mock.patch.object(
+            phases_impl.subprocess,
+            "run",
+            side_effect=lambda cmd, **kwargs: (
+                self.calls.append(cmd),
+                CompletedProcess(cmd, 0),
+            )[1],
+        )
+        run_patch.start()
+        self.addCleanup(run_patch.stop)
+
+    def ctx(self, storage):
+        return types.SimpleNamespace(
+            is_protected=True,
+            target=Path("/mnt"),
+            monarch_install={"storage": storage},
+        )
+
+    def test_failure_removes_only_the_created_partitions_in_reverse_order(self):
+        ctx = self.ctx({
+            "disk": "/dev/nvme0n1",
+            "created_partitions": [2, 5],
+        })
+        phases_impl.cleanup_protected_state(ctx)
+        phases_impl.cleanup_protected_state(ctx)
+
+        self.assertIn(["umount", "-R", "/mnt"], self.calls)
+        self.assertIn(["parted", "--script", "/dev/nvme0n1", "rm", "5"], self.calls)
+        self.assertIn(["parted", "--script", "/dev/nvme0n1", "rm", "2"], self.calls)
+        self.assertLess(
+            self.calls.index(["parted", "--script", "/dev/nvme0n1", "rm", "5"]),
+            self.calls.index(["parted", "--script", "/dev/nvme0n1", "rm", "2"]),
+        )
+        self.assertIn(["partprobe", "/dev/nvme0n1"], self.calls)
+        self.assertEqual(
+            self.calls.count(["parted", "--script", "/dev/nvme0n1", "rm", "5"]),
+            1,
+        )
+
+    def test_untrusted_or_missing_metadata_never_removes_partitions(self):
+        for storage in (
+            {},
+            {"disk": "/tmp/not-a-device", "created_partitions": [2, 3]},
+            {"disk": "/dev/vda", "created_partitions": [0, "3"]},
+        ):
+            with self.subTest(storage=storage):
+                self.calls.clear()
+                phases_impl.cleanup_protected_state(self.ctx(storage))
+                self.assertFalse(any(cmd[0] in ("parted", "partprobe") for cmd in self.calls))
 
 
 if __name__ == "__main__":

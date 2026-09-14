@@ -40,8 +40,7 @@ from .ui import error, info
 
 
 # Build metadata is diagnostic only. Monarch deliberately has no release
-# channels: every ISO installs the `monarch` runtime and its exact-version
-# `monarch-settings` dependency.
+# channels: every ISO installs the runtime built from the requested source.
 def _iso_ref() -> str:
     if ref := os.environ.get("MONARCH_ISO_REF"):
         return ref.strip()
@@ -54,10 +53,6 @@ def _iso_ref() -> str:
             pass
 
     return "dev"
-
-
-def _monarch_runtime_package() -> str:
-    return "monarch"
 
 
 # Packages installed BEFORE useradd. monarch-settings owns /etc/skel and the
@@ -85,19 +80,14 @@ def _early_bootstrap_packages() -> list[str]:
     return [
         *EARLY_BOOTSTRAP_BASE_PACKAGES,
         "monarch-settings",
-        _monarch_runtime_package(),
+        "monarch",
     ]
-
-
-def _early_user_seed_packages() -> list[str]:
-    return []
 
 
 def _early_packages() -> list[str]:
     return [
         *_early_bootstrap_packages(),
         *EARLY_LUAROCKS_PACKAGES,
-        *_early_user_seed_packages(),
     ]
 
 
@@ -571,16 +561,12 @@ def _drop_archinstall_zram_conf(ctx: InstallContext) -> None:
 
 def _install_early_packages(installer) -> None:
     bootstrap_packages = _early_bootstrap_packages()
-    user_seed_packages = _early_user_seed_packages()
 
     info(f"› installing early Monarch packages: {', '.join(bootstrap_packages)}")
     installer.add_additional_packages(bootstrap_packages)
 
     info(f"› installing LuaRocks prerequisites: {', '.join(EARLY_LUAROCKS_PACKAGES)}")
     installer.add_additional_packages(EARLY_LUAROCKS_PACKAGES)
-
-    info(f"› installing user seed packages: {', '.join(user_seed_packages)}")
-    installer.add_additional_packages(user_seed_packages)
 
 
 def _mount_offline_package_cache(ctx: InstallContext) -> None:
@@ -671,11 +657,7 @@ def _runtime_package_list(ctx: InstallContext) -> list[str]:
     """Selected Monarch runtime package + every package in the ISO-bundled
     base package list that isn't already installed early."""
     pkgs = []
-    already_installed = set(_early_packages()) | {
-        _monarch_runtime_package(),
-        "monarch",
-        "monarch-settings",
-    }
+    already_installed = set(_early_packages())
     excluded = set()
     if not ctx.include_preinstalls:
         excluded = {
@@ -1031,7 +1013,6 @@ def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str 
         with ctx.log_path.open("a", encoding="utf-8") as log:
             log.write(f"[orchestrator] WARNING: failed to bind unified setup log: {exc}\n")
 
-    mirror_channel = _read_monarch_mirror()
     env_extras = [
         "MONARCH_PATH=/usr/share/monarch",
         "MONARCH_INSTALL=/usr/share/monarch/install",
@@ -1040,9 +1021,7 @@ def _run_target_setup_command(ctx: InstallContext, cmd: list[str], *, user: str 
         f"MONARCH_START_EPOCH={monarch_start_epoch}",
         f"MONARCH_USER_NAME={ctx.full_name}",
         f"MONARCH_USER_EMAIL={ctx.email}",
-        f"MONARCH_MIRROR={mirror_channel}",
         f"MONARCH_ISO_REF={_iso_ref()}",
-        f"MONARCH_RUNTIME_PACKAGE={_monarch_runtime_package()}",
         "MONARCH_INSTALL_LOG_FILE=/var/log/monarch-install.log",
         "MONARCH_LOG_TO_STDOUT=1",
     ]
@@ -1351,11 +1330,6 @@ def configure_dns_resolver(ctx: InstallContext) -> None:
     resolv_conf.parent.mkdir(parents=True, exist_ok=True)
     resolv_conf.unlink(missing_ok=True)
     resolv_conf.symlink_to(target)
-
-
-def _read_monarch_mirror() -> str:
-    p = Path("/root/monarch_mirror")
-    return p.read_text().strip() if p.exists() else "stable"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1914,7 +1888,7 @@ def cleanup_target_hook_masks(ctx: InstallContext) -> None:
 
 
 def cleanup_protected_state(ctx: InstallContext) -> None:
-    """Tear down protected-mode mounts and LUKS mapper after a failed install.
+    """Tear down and roll back protected-mode storage after a failed install.
 
     Idempotent and safe to call multiple times. Successful protected installs
     intentionally keep the target mounted until reboot.
@@ -1929,3 +1903,32 @@ def cleanup_protected_state(ctx: InstallContext) -> None:
             check=False,
             capture_output=True,
         )
+
+    storage = _storage_intent(ctx)
+    disk = storage.get("disk")
+    created_partitions = storage.get("created_partitions") or []
+    if not _valid_protected_rollback(disk, created_partitions):
+        return
+
+    # Consume the in-memory intent before touching the disk so cleanup remains
+    # idempotent even if a caller invokes it again from another finally path.
+    ctx.monarch_install["storage"]["created_partitions"] = []
+    for partition in sorted(set(created_partitions), reverse=True):
+        subprocess.run(
+            ["parted", "--script", disk, "rm", str(partition)],
+            check=False,
+            capture_output=True,
+        )
+    subprocess.run(["partprobe", disk], check=False, capture_output=True)
+
+
+def _valid_protected_rollback(disk: object, partitions: object) -> bool:
+    """Accept only the narrow metadata emitted by the protected configurator."""
+    if not isinstance(disk, str) or not disk.startswith("/dev/"):
+        return False
+    if not isinstance(partitions, list) or not partitions:
+        return False
+    return all(
+        isinstance(partition, int) and not isinstance(partition, bool) and partition > 0
+        for partition in partitions
+    )

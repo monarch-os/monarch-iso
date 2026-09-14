@@ -34,5 +34,7 @@ grep -qF 'MONARCH_LOCAL_PKGVER=$("${BASH_SOURCE[0]%/*}/../builder/source-package
   "$root/bin/monarch-iso-make"
 grep -qF 'printf '\''%s\n'\'' "$MONARCH_LOCAL_PKGVER" >"$local_source_dir/version"' \
   "$root/builder/build-monarch-package.sh"
+grep -qF 'MONARCH_LOCAL_PKGVER=$(bash /builder/source-package-version.sh /monarch-source)' \
+  "$root/builder/build-iso.sh"
 
-echo "ok - the host-derived version reaches the temporary package source"
+echo "ok - the source-derived version reaches the temporary package source"

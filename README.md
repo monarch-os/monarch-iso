@@ -2,7 +2,7 @@
 
 Based on Omarchy, inspired by SkillArch
 
-The Monarch ISO streamlines the installation of [Monarch OS](https://www.monarchlinux.com/). It includes the Monarch Configurator as a front-end to archinstall and automatically launches the [Monarch Installer](https://github.com/monarch-os/monarch) after base Arch Linux has been setup.
+The Monarch ISO streamlines the installation of [Monarch OS](https://www.monarchlinux.com/). It includes the Monarch Configurator as a front-end to archinstall and automatically launches the [Monarch Installer](https://github.com/monarch-os/monarch) after the CachyOS-based system has been set up.
 
 ## Downloading the latest ISO
 
@@ -16,12 +16,15 @@ Run `./bin/monarch-iso-make` and the output goes into `./release`.
 
 You can customize the repositories used during the build process by passing in variables:
 
-- `MONARCH_INSTALLER_REPO` - Repository for the installer (default: `https://github.com/monarch-os/monarch.git`)
-- `MONARCH_INSTALLER_REF` - Git ref (branch/tag) for the installer (default: `main`)
+- `MONARCH_INSTALLER_REPO` - Repository for the Monarch runtime (default: `https://github.com/monarch-os/monarch.git`)
+- `MONARCH_INSTALLER_REF` - Git ref (branch/tag) for the runtime (default: `dev`)
+- `MONARCH_PKGS_REPO` - Repository carrying the runtime PKGBUILDs
+- `MONARCH_PKGS_REF` - Git ref for those PKGBUILDs (default: `main`)
 
 Example usage:
 ```bash
-MONARCH_INSTALLER_REPO="https://github.com/monuser/monarch-fork.git" MONARCH_INSTALLER_REF="some-feature" ./bin/monarch-iso-make
+MONARCH_INSTALLER_REPO="https://github.com/monuser/monarch-fork.git" \
+  MONARCH_INSTALLER_REF="some-feature" ./bin/monarch-iso-make
 ```
 
 ### Build Options
@@ -96,7 +99,8 @@ the first boot:
 ```
 
 Writes `vm-saves/cidata.iso`. `--help` lists the rest: `--disk`, `--size`,
-`--hostname`, `--timezone`, `--keyboard`, `--encrypt`, `--password`, `-o`. The
+`--hostname`, `--timezone`, `--keyboard`, `--encrypt`, `--password`,
+`--tailscale-authkey`, `-o`. The
 defaults describe a test VM — `/dev/vda`, 30G, unencrypted, this host's timezone
 and keyboard layout, your git identity. Pass `--no-preinstalls` to keep the
 Monarch desktop while leaving out optional applications, web apps, terminal
@@ -117,19 +121,27 @@ something the flags do not cover.
 | File | Required | Purpose |
 |------|----------|---------|
 | `user_configuration.json` | Yes | archinstall config: disk, encryption, hostname, timezone, keyboard |
-| `user_credentials.json` | Yes | Username and password hash |
+| `user_credentials.json` | Unless deferred | Username, password hash and optional LUKS passphrase |
+| `defer-provisioning` | Instead of credentials | Create the owner during first boot |
 | `user_full_name.txt` | No | Git full name |
 | `user_email_address.txt` | No | Git email |
 | `authorized_keys` | No | SSH public keys in sshd's own format, one per line |
+| `tailscale_authkey` | No | One Tailscale auth key, consumed after the first successful join |
 
-Both required files must be present, and the credentials must name a user, or
-the installer falls back to the configurator. Generate the password hash with
-`openssl passwd -6 "yourpassword"`.
+`user_configuration.json` plus either credentials naming a user or the
+`defer-provisioning` marker must be present, or the installer falls back to the
+configurator. Generate the password hash with `openssl passwd -6
+"yourpassword"`.
 
-Encryption is configured by the `disk_encryption` block inside
+Pass `--tailscale-authkey FILE` to stage a first-boot tailnet join. The helper
+requires exactly one non-comment key. The installed service deletes it after a
+successful join; the factory snapshot also excludes it.
+
+Full-disk encryption is configured by the `disk_encryption` block inside
 `user_configuration.json` — which carries the passphrase in plaintext, so treat
-a drive built from an encrypted install accordingly. Drop the block for an
-unencrypted install.
+a drive built from an encrypted install accordingly. The interactive UEFI
+free-space path instead records the LUKS UUID of the mapper it already created;
+both representations feed the same effective encryption state.
 
 `authorized_keys` is the same file sshd reads — copy your own or write one key
 per line:

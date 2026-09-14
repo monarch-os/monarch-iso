@@ -9,6 +9,7 @@ BUILD_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 USERNAME=""
 PASSWORD="monarch"
 KEY_FILE=""
+TAILSCALE_AUTHKEY_FILE=""
 DISK="/dev/vda"
 DISK_SIZE="30G"
 HOSTNAME_="monarch"
@@ -30,6 +31,8 @@ Usage: monarch-iso-cidata (--user NAME | --defer-provisioning) [options]
                      Install without an account; create the owner at first boot
   --password PW      Account, root and LUKS password (default: $PASSWORD)
   --key FILE         SSH public keys, sshd's own format (default: ~/.ssh/id_ed25519.pub)
+  --tailscale-authkey FILE
+                     Tailscale auth key staged for a first-boot join
   --disk DEV         Install target inside the guest (default: $DISK)
   --size SIZE        Guest disk size, e.g. 30G (default: $DISK_SIZE)
   --hostname NAME    (default: $HOSTNAME_)
@@ -52,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --defer-provisioning) DEFER_PROVISIONING=true; shift ;;
     --password) PASSWORD="$2"; shift 2 ;;
     --key) KEY_FILE="$2"; shift 2 ;;
+    --tailscale-authkey) TAILSCALE_AUTHKEY_FILE="$2"; shift 2 ;;
     --disk) DISK="$2"; shift 2 ;;
     --size) DISK_SIZE="$2"; shift 2 ;;
     --hostname) HOSTNAME_="$2"; shift 2 ;;
@@ -103,6 +107,23 @@ if [[ -n $KEY_FILE ]] && ! grep -qvE '^[[:space:]]*(#|$)' "$KEY_FILE"; then
   exit 1
 fi
 
+if [[ -n $TAILSCALE_AUTHKEY_FILE && ! -f $TAILSCALE_AUTHKEY_FILE ]]; then
+  echo "monarch-iso-cidata: no Tailscale auth key at $TAILSCALE_AUTHKEY_FILE" >&2
+  exit 1
+fi
+
+if [[ -n $TAILSCALE_AUTHKEY_FILE ]]; then
+  mapfile -t tailscale_authkeys < <(
+    sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
+      -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+      "$TAILSCALE_AUTHKEY_FILE"
+  )
+  if (( ${#tailscale_authkeys[@]} != 1 )); then
+    echo "monarch-iso-cidata: $TAILSCALE_AUTHKEY_FILE must contain exactly one Tailscale auth key" >&2
+    exit 1
+  fi
+fi
+
 case "${DISK_SIZE^^}" in
   *G) disk_size_bytes=$(( ${DISK_SIZE%[gG]} * 1024 * 1024 * 1024 )) ;;
   *M) disk_size_bytes=$(( ${DISK_SIZE%[mM]} * 1024 * 1024 )) ;;
@@ -148,6 +169,10 @@ if [[ -n $KEY_FILE ]]; then
   grep -vE '^[[:space:]]*(#|$)' "$KEY_FILE" >"$staging/authorized_keys"
 fi
 
+if [[ -n $TAILSCALE_AUTHKEY_FILE ]]; then
+  printf '%s\n' "${tailscale_authkeys[0]}" >"$staging/tailscale_authkey"
+fi
+
 jq empty "$staging/user_configuration.json"
 [[ ! -f $staging/user_credentials.json ]] || jq empty "$staging/user_credentials.json"
 
@@ -166,6 +191,9 @@ if [[ -n $KEY_FILE ]]; then
   echo "  keys       $(wc -l <"$staging/authorized_keys") from $KEY_FILE"
 else
   echo "  keys       deferred until owner provisioning"
+fi
+if [[ -n $TAILSCALE_AUTHKEY_FILE ]]; then
+  echo "  tailscale  join staged from $TAILSCALE_AUTHKEY_FILE"
 fi
 
 if [[ $ENCRYPT == true ]]; then

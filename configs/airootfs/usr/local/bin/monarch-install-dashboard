@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Foreground Monarch ISO install UI supervisor.
 #
 # This process is the only owner of the visible install UI. It launches the

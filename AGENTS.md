@@ -42,7 +42,7 @@ Both are bind-mounted into `/mnt` before the chroot install. `configs/pacman-off
 - Adding a package to the installer means adding it to one of the `.packages` lists, or it simply will not exist at install time.
 - Test the offline path explicitly: `./bin/monarch-iso-boot <iso> offline` boots QEMU with `-nic none`.
 
-The mirror is **pruned to the exact transaction** before it is indexed. The build cache is per-day but shared by every build that day, so it accumulates superseded versions and packages that have left the lists or the dependency closure. `build-iso.sh` re-resolves the filenames with `pacman -S --print --print-format '%f'` against the *same* already-synced dbpath (plain `-S` — a re-sync could pick a different version than the one `-Syw` downloaded), then pipes them to `builder/prune-offline-mirror.sh`.
+The mirror is **pruned to the exact transaction** before it is indexed. The build cache is keyed by installer ref and shared by every build of that ref, so it accumulates superseded versions and packages that have left the lists or the dependency closure. `build-iso.sh` re-resolves the filenames with `pacman -S --print --print-format '%f'` against the *same* already-synced dbpath (plain `-S` — a re-sync could pick a different version than the one `-Syw` downloaded), then pipes them to `builder/prune-offline-mirror.sh`.
 
 This is a correctness fix as much as a size one: with several versions of a package present, `repo-add` indexes whichever the shell glob hands it first — lexical order, not version order, so pkgrel `-9` can shadow `-15`. The db is now rebuilt from scratch each time rather than added to.
 
@@ -59,12 +59,13 @@ everything downstream runs the ordinary path against ordinary inputs — that is
 the whole trick, and the reason the feature costs so little: nothing branches on
 "is this an autoinstall" past that point.
 
-`user_configuration.json` and `user_credentials.json` are both required; anything
-less is not an autoinstall drive and `.automated_script.sh` falls back to the
-configurator. `user_full_name.txt`, `user_email_address.txt` and
-`authorized_keys` are optional there exactly as they are in the wizard. Build one with
-`bin/monarch-iso-cidata` and attach it with `MONARCH_VM_CIDATA=cidata.iso
-./bin/monarch-iso-boot`.
+`user_configuration.json` plus either `user_credentials.json` or the
+`defer-provisioning` marker are required; anything less is not an autoinstall
+drive and `.automated_script.sh` falls back to the configurator. The marker
+installs without an account and hands owner creation to first boot.
+`user_full_name.txt`, `user_email_address.txt`, `authorized_keys` and
+`tailscale_authkey` are optional. Build a drive with `bin/monarch-iso-cidata`
+and attach it with `MONARCH_VM_CIDATA=cidata.iso ./bin/monarch-iso-boot`.
 
 The helper does not carry its own copy of the schema: `write-install-config`
 holds the generation, and the configurator sources it too. That is the whole
@@ -97,6 +98,11 @@ docker DNS open. They cannot all happen at the same moment:
 An `authorized_keys` with no usable keys fails the install. An install that
 "succeeds" into a machine nobody can log into is worse than one that stops with
 the reason on screen.
+
+`tailscale_authkey` contains exactly one usable key. Tailscale is installed
+while the offline mirror is mounted, then a non-blocking first-boot service
+joins the tailnet, deletes the key and disables itself. The factory snapshot
+must never retain that deployment credential.
 
 Note the live ISO is a different story: releng already installs `openssh` and
 enables `sshd`, with `PermitRootLogin yes`. Only root's empty password stands in
@@ -147,7 +153,12 @@ by name; `save` refuses a name one already answers to rather than shadowing it.
 the disk that gets booted. It did not hold for a while, and `boot` silently
 started the wrong VM.
 
-Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`). `--local-source` bind-mounts `$MONARCH_PATH` instead of cloning.
+Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike
+Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`) choose the
+runtime source; `MONARCH_PKGS_REPO` and `MONARCH_PKGS_REF` (default `main`)
+choose its package recipes. Normal builds clone both validated refs and build
+the `monarch`/`monarch-settings` pair. `--local-source` bind-mounts the two
+supplied checkouts instead.
 
 `dev` is the default because it is the only long-lived branch on `monarch-os/monarch` and its remote HEAD — there is no `main` or `master`. Check with `git ls-remote --heads` before assuming otherwise; a ref that does not exist fails the clone inside the container and aborts the build.
 
@@ -177,18 +188,16 @@ Upstream naming maps to ours as `omarchy*` → `monarch*` (paths, binaries, `OMA
 Deliberate divergences — do not "restore" these during a sync:
 
 - **CachyOS base** — see the top of this file.
-- **No release channels.** Omarchy splits `stable` / `rc` / `edge` via `OMARCHY_MIRROR` and `pacman-online-<channel>.conf`, with per-channel build caches and `--rc` / `--quattro` flags. Monarch has a single `pacman-online.conf` and a date-stamped build cache.
+- **No release channels.** Omarchy splits `stable` / `rc` / `edge` via `OMARCHY_MIRROR` and `pacman-online-<channel>.conf`, with per-channel build caches and `--rc` / `--quattro` flags. Monarch has a single `pacman-online.conf` and a ref-keyed build cache.
 - **No Omarchy repo, mirror, keyring or GPG preload** (`builder/omarchy.gpg`, `pacman-key --add`/`--lsign-key`).
 - **No archinstall 4.2 / Python 3.14 sed patches.** Upstream still carries them; they were fixed upstream in archinstall 4.3 and removed here on purpose.
 - **Desktop shell is Noctalia, not waybar.** Any upstream `chmod +x .../default/waybar/...` logic is dead code here.
-- **Autoinstall is the `cidata` mechanism only.** Quattro's drive also carries
-  `defer-provisioning` (user creation deferred to first boot), `tailscale_authkey`
-  and `user_encrypt_installation.txt`. The first two have no equivalent here. The
-  third is a flag file their orchestrator needs for decisions we do not make
-  (encrypted-install SDDM autologin, final boot validation); Monarch reads the
-  encryption choice straight out of `user_configuration.json`, which is the only
-  place it is actually configured, so there is nothing for a second file to drift
-  against.
+- **Autoinstall is the `cidata` mechanism only.** Monarch intentionally supports
+  Quattro-compatible `defer-provisioning` and `tailscale_authkey` inputs through
+  that drive. It does not carry `user_encrypt_installation.txt`: full-disk
+  encryption comes from `disk_config.disk_encryption`, while protected
+  free-space installs carry their effective encryption state as
+  `monarch_install.storage.luks_uuid`. There is no duplicate flag to drift.
 - **The installer TUI is rebranded** (Monarch purple palette, progress bar, welcome/summary boxes, French keyboard preselected). Port upstream's *behaviour* changes into it; don't take the styling wholesale.
 
 # VM Testing Gotchas
