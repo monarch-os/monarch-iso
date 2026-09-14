@@ -11,6 +11,7 @@ set -uo pipefail
 
 TEST_ROOT=$(realpath "${BASH_SOURCE[0]%/*}/..")
 GENERATOR="$TEST_ROOT/configs/airootfs/root/write-install-config"
+CONFIGURATOR="$TEST_ROOT/configs/airootfs/root/configurator"
 HELPER="$TEST_ROOT/bin/monarch-iso-cidata"
 
 failures=0
@@ -51,6 +52,53 @@ generate() {
   )
 }
 
+generate_protected() {
+  local outdir="$work/protected"
+  mkdir -p "$outdir"
+  (
+    cd "$outdir" || exit 1
+    WRITE_INSTALL_CONFIG_LIBRARY_ONLY=true
+    source "$GENERATOR"
+    disk=/dev/nvme0n1
+    username=jeff
+    password=hunter2
+    password_hash='$6$fake$hash'
+    full_name="Jeff Doe"
+    email_address=jeff@example.com
+    hostname=monarch
+    timezone=Europe/Paris
+    keyboard=fr
+    encrypt_installation=true
+    include_preinstalls=true
+    esp_mount_in_target=/boot
+    efi_dev=/dev/nvme0n1p2
+    root_partition_device=/dev/nvme0n1p3
+    root_mapper=/dev/mapper/monarch_root
+    luks_uuid_json='"00000000-0000-0000-0000-000000000001"'
+    rollback_partitions_json='[2, 3]'
+    kernel_choice=linux-cachyos
+    write_install_user_files
+    write_protected_install_config
+  )
+}
+
+echo "the configurator and cidata share one schema writer"
+assert "the wizard sources the canonical writer" \
+  grep -qF 'source "${BASH_SOURCE[0]%/*}/write-install-config"' "$CONFIGURATOR"
+assert "the wizard carries no embedded bootloader schema" \
+  test "$(grep -cF '"bootloader_config"' "$CONFIGURATOR")" -eq 0
+assert "both install modes call the shared writer" \
+  bash -c 'grep -qF write_full_disk_install_config "$1" && grep -qF write_protected_install_config "$1"' \
+  _ "$CONFIGURATOR"
+
+generate_protected
+assert "the protected writer emits valid JSON" jq empty "$work/protected/user_configuration.json"
+assert "the protected writer carries bounded rollback ownership" \
+  jq_e '.monarch_install.mode == "protected"
+    and .monarch_install.storage.disk == "/dev/nvme0n1"
+    and .monarch_install.storage.created_partitions == [2, 3]' \
+  "$work/protected/user_configuration.json"
+
 echo "an encrypted install writes valid archinstall inputs"
 generate encrypted true
 assert "user_configuration.json is valid JSON" jq empty "$work/encrypted/user_configuration.json"
@@ -72,6 +120,8 @@ assert "the user is still created" \
   jq_e '.users[0].username == "jeff"' "$work/plain/user_credentials.json"
 assert "the git identity is written for the installer to pick up" \
   test "$(cat "$work/plain/user_full_name.txt")" = "Jeff Doe"
+assert "preinstalls remain enabled by default" \
+  jq_e '.monarch_install.include_preinstalls == true' "$work/plain/user_configuration.json"
 
 # `iso` would copy the live medium's networkd files into the target and enable
 # them against NetworkManager, which owns the links.
@@ -96,7 +146,7 @@ run_helper() {
 echo "the helper refuses what would produce an unusable drive"
 run_helper --key /dev/null
 assert "no --user is refused" test "$status" -ne 0
-assert "and says so" grep -q -- "--user is required" <<<"$out"
+assert "and says so" grep -q -- "--user or --defer-provisioning is required" <<<"$out"
 
 run_helper --user "Not A User" --key /dev/null
 assert "an invalid username is refused" test "$status" -ne 0
@@ -110,26 +160,64 @@ run_helper --user jeff --key "$work/missing.pub"
 assert "a missing key file is refused" test "$status" -ne 0
 
 echo 'ssh-ed25519 AAAA jeff@host' >"$work/id.pub"
+
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/missing.tskey"
+assert "a missing Tailscale auth key file is refused" test "$status" -ne 0
+
+printf '# no key\n\n' >"$work/empty.tskey"
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/empty.tskey"
+assert "an empty Tailscale auth key file is refused" test "$status" -ne 0
+
+printf 'tskey-auth-kONE\ntskey-auth-kTWO\n' >"$work/multiple.tskey"
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/multiple.tskey"
+assert "multiple Tailscale auth keys are refused" test "$status" -ne 0
+
+printf '# deployment key\n  tskey-auth-kFAKEKEY  \n' >"$work/tailscale.key"
 run_helper --user jeff --key "$work/id.pub" --size 30Q
 assert "an unreadable size is refused" test "$status" -ne 0
 
 echo "the helper builds a drive the loader will recognise"
-run_helper --user jeff --key "$work/id.pub" --size 24G --hostname box \
-  --timezone UTC --keyboard us -o "$work/cidata.iso"
+run_helper --user jeff --key "$work/id.pub" --tailscale-authkey "$work/tailscale.key" \
+  --size 24G --hostname box \
+  --timezone UTC --keyboard us --no-preinstalls -o "$work/cidata.iso"
 assert "it succeeds" test "$status" -eq 0
 assert "the volume is labelled cidata" \
   bash -c "xorriso -indev '$work/cidata.iso' -pvd_info 2>/dev/null | grep -qi \"Volume Id *: cidata\""
 mkdir -p "$work/extracted"
 xorriso -osirrox on -indev "$work/cidata.iso" -extract / "$work/extracted" >/dev/null 2>&1
-for file in user_configuration.json user_credentials.json authorized_keys; do
+for file in user_configuration.json user_credentials.json authorized_keys tailscale_authkey; do
   assert "the drive carries $file" test -f "$work/extracted/$file"
 done
+assert "the drive normalizes the Tailscale auth key" \
+  test "$(cat "$work/extracted/tailscale_authkey")" = "tskey-auth-kFAKEKEY"
 assert "the flags reached the configuration" \
-  jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"' \
+  jq_e '.hostname == "box" and .timezone == "UTC" and .locale_config.kb_layout == "us"
+    and .monarch_install.include_preinstalls == false
+    and .bootloader_config.bootloader == "Limine"
+    and (has("bootloader") | not)' \
   "$work/extracted/user_configuration.json"
 assert "the size flag reached the partition table" \
   jq_e '[.disk_config.device_modifications[0].partitions[].size.value] | add < (24 * 1024 * 1024 * 1024)' \
   "$work/extracted/user_configuration.json"
+
+echo "the helper builds a userless deferred-provisioning drive"
+rm -rf "$work/extracted"
+mkdir -p "$work/extracted"
+run_helper --defer-provisioning --size 24G --hostname handoff \
+  --timezone UTC --keyboard us --encrypt -o "$work/deferred.iso"
+assert "deferred provisioning succeeds without a user or SSH key" test "$status" -eq 0
+xorriso -osirrox on -indev "$work/deferred.iso" -extract / "$work/extracted" >/dev/null 2>&1
+assert "the marker replaces credentials" test -f "$work/extracted/defer-provisioning"
+assert "no deployment credentials are shipped" test ! -e "$work/extracted/user_credentials.json"
+assert "no SSH key is required" test ! -e "$work/extracted/authorized_keys"
+assert "the Monarch contract defers owner creation" \
+  jq_e '.monarch_install.defer_provisioning == true' "$work/extracted/user_configuration.json"
+assert "encrypted handoff carries no deployment passphrase" \
+  jq_e '.disk_config.disk_encryption | has("encryption_password") | not' \
+  "$work/extracted/user_configuration.json"
+
+run_helper --user jeff --defer-provisioning --key "$work/id.pub"
+assert "a user cannot also be deferred" test "$status" -ne 0
 
 echo
 if ((failures > 0)); then
