@@ -22,7 +22,7 @@ class T2FirmwareTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.archive = self.root / "run/firmware-raw.tar.gz"
-        self.package = self.root / "run/apple-bcm-firmware-local-1-1-any.pkg.tar.zst"
+        self.package = self.root / "run/apple-bcm-firmware-local-1-1-any.pkg.tar.gz"
         self.target = self.root / "mnt"
         self.target.mkdir()
 

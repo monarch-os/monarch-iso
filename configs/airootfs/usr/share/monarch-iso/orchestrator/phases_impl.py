@@ -57,7 +57,7 @@ def _iso_ref() -> str:
 
 TARGET_BOOTSTRAP_PACKAGES = Path("/usr/share/monarch-iso/target-bootstrap.packages")
 T2_FIRMWARE_ARCHIVE = Path("/run/monarch-install/t2-firmware-raw.tar.gz")
-T2_FIRMWARE_PACKAGE = Path("/run/monarch-install/apple-bcm-firmware-local-1-1-any.pkg.tar.zst")
+T2_FIRMWARE_PACKAGE = Path("/run/monarch-install/apple-bcm-firmware-local-1-1-any.pkg.tar.gz")
 T2_FIRMWARE_COMMAND = "/usr/local/bin/monarch-setup-t2-firmware"
 
 
