@@ -95,7 +95,8 @@ bsdtar -xf "$settings_package" -C "$runtime_root"
 runtime_share="$runtime_root/usr/share/monarch"
 for required in install/monarch-base.packages install/monarch-other.packages \
   install/monarch-preinstalls.packages \
-  install/python.packages install/provisioning/setup-form.sh logo.txt; do
+  install/python.packages install/provisioning/setup-form.sh \
+  assets/t2/firmware.py assets/t2/LICENSE bin/monarch-setup-t2-firmware logo.txt; do
   [[ -f $runtime_share/$required ]] || {
     echo "ERROR: monarch package does not ship /usr/share/monarch/$required" >&2
     exit 1
@@ -103,6 +104,7 @@ for required in install/monarch-base.packages install/monarch-other.packages \
 done
 
 mkdir -p "$build_cache_dir/airootfs/usr/share/monarch-iso" \
+  "$build_cache_dir/airootfs/usr/share/monarch/assets/t2" \
   "$build_cache_dir/airootfs/usr/share/monarch" \
   "$build_cache_dir/airootfs/usr/local/bin" \
   "$build_cache_dir/airootfs/usr/share/plymouth/themes/monarch"
@@ -110,6 +112,9 @@ cp "$runtime_share/install/monarch-base.packages" "$build_cache_dir/airootfs/usr
 cp "$runtime_share/install/monarch-other.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/monarch-preinstalls.packages" "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/install/provisioning/setup-form.sh" "$build_cache_dir/airootfs/usr/share/monarch-iso/setup-form.sh"
+cp "$runtime_share/assets/t2/firmware.py" "$runtime_share/assets/t2/LICENSE" \
+  "$build_cache_dir/airootfs/usr/share/monarch/assets/t2/"
+cp "$runtime_share/bin/monarch-setup-t2-firmware" "$build_cache_dir/airootfs/usr/local/bin/"
 cp /builder/target-bootstrap.packages "$build_cache_dir/airootfs/usr/share/monarch-iso/"
 cp "$runtime_share/logo.txt" "$build_cache_dir/airootfs/usr/share/monarch/logo.txt"
 cp "$runtime_share/bin/monarch-upload-log" "$build_cache_dir/airootfs/usr/local/bin/monarch-upload-log"

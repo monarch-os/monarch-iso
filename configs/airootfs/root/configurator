@@ -941,6 +941,29 @@ select_installation() {
   done
 }
 
+stage_t2_firmware() {
+  local archive=/run/monarch-install/t2-firmware-raw.tar.gz
+
+  lspci -Dn | grep -qiE '106b:180[12]' || return 0
+  [[ -f $archive ]] && return 0
+
+  step "Preparing T2 Wi-Fi firmware..."
+  if monarch-setup-t2-firmware stage "$disk" "$archive"; then
+    say "The firmware prepared from macOS will be installed with Monarch."
+    sleep 1
+    return 0
+  fi
+
+  clear_logo
+  echo
+  say --foreground 1 "No firmware prepared from macOS was found on the internal EFI partition."
+  say "Monarch can still be installed, but internal Wi-Fi and Bluetooth will remain unavailable."
+  say "Cancel and run 'monarch-setup-t2-firmware --help' for the macOS preparation steps."
+  echo
+  gum confirm --affirmative "Continue without firmware" --negative "Cancel installation" \
+    "Continue installing Monarch?" || abort "Installation cancelled before changing the disk."
+}
+
 # STEP 1: KEYBOARD (Ctrl+C here arms deferred provisioning and jumps to disk selection)
 
 defer_provisioning=false
@@ -992,6 +1015,7 @@ else
   select_installation
 fi
 
+stage_t2_firmware
 clear
 
 write_install_user_files

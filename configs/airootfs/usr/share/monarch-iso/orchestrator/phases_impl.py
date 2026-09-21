@@ -56,6 +56,9 @@ def _iso_ref() -> str:
 
 
 TARGET_BOOTSTRAP_PACKAGES = Path("/usr/share/monarch-iso/target-bootstrap.packages")
+T2_FIRMWARE_ARCHIVE = Path("/run/monarch-install/t2-firmware-raw.tar.gz")
+T2_FIRMWARE_PACKAGE = Path("/run/monarch-install/apple-bcm-firmware-local-1-1-any.pkg.tar.zst")
+T2_FIRMWARE_COMMAND = "/usr/local/bin/monarch-setup-t2-firmware"
 
 
 def _target_bootstrap_group(name: str) -> list[str]:
@@ -108,6 +111,8 @@ def _early_packages() -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
+    _stage_t2_firmware(ctx)
+
     if ctx.is_protected:
         info("› free-space install: skipping whole-disk cleanup")
     else:
@@ -121,6 +126,41 @@ def prepare_live(ctx: InstallContext) -> None:
         ctx.arch_config_path, ctx.creds_path
     )
     ctx.state["mirror_handler"] = arch.make_mirror_handler(offline=True)
+
+
+def _is_t2_hardware() -> bool:
+    result = subprocess.run(
+        ["lspci", "-Dn"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return re.search(r"106b:180[12]", result.stdout, re.IGNORECASE) is not None
+
+
+def _stage_t2_firmware(ctx: InstallContext) -> None:
+    if not _is_t2_hardware() or T2_FIRMWARE_ARCHIVE.exists():
+        return
+
+    disk = _install_disk(ctx) or _storage_intent(ctx).get("disk")
+    if not disk:
+        info("warning: T2 hardware detected, but the install disk is unknown")
+        return
+
+    T2_FIRMWARE_ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [T2_FIRMWARE_COMMAND, "stage", str(disk), str(T2_FIRMWARE_ARCHIVE)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        info("› staged T2 firmware from the internal EFI partition")
+    elif result.returncode == 2:
+        info("warning: no macOS-prepared T2 firmware was found; internal Wi-Fi will be unavailable")
+    else:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        raise RuntimeError(f"could not stage T2 firmware: {detail}")
 
 
 def _install_disk(ctx: InstallContext) -> str | None:
@@ -236,6 +276,8 @@ def arch_install_system(ctx: InstallContext) -> None:
             _unmask_mkinitcpio_pacman_hooks(ctx)
             _unmount_offline_package_cache(ctx)
 
+        _install_t2_firmware(ctx)
+
         # Standard arch finishers.
         if config.timezone:
             installer.set_timezone(config.timezone)
@@ -248,6 +290,45 @@ def arch_install_system(ctx: InstallContext) -> None:
             _write_pre_mounted_fstab(ctx)
         else:
             installer.genfstab()
+
+
+def _install_t2_firmware(ctx: InstallContext) -> None:
+    if not T2_FIRMWARE_ARCHIVE.exists():
+        return
+
+    info("› building locally extracted T2 firmware package")
+    subprocess.run(
+        [
+            T2_FIRMWARE_COMMAND,
+            "build",
+            str(T2_FIRMWARE_ARCHIVE),
+            str(T2_FIRMWARE_PACKAGE),
+        ],
+        check=True,
+    )
+
+    cache = ctx.target / "var" / "cache" / "pacman" / "pkg"
+    cache.mkdir(parents=True, exist_ok=True)
+    target_package = cache / T2_FIRMWARE_PACKAGE.name
+    shutil.copy2(T2_FIRMWARE_PACKAGE, target_package)
+
+    _mask_mkinitcpio_pacman_hooks(ctx, ctx.target)
+    try:
+        subprocess.run(
+            [
+                "arch-chroot",
+                str(ctx.target),
+                "pacman",
+                "-U",
+                "--noconfirm",
+                f"/var/cache/pacman/pkg/{target_package.name}",
+            ],
+            check=True,
+        )
+    finally:
+        _unmask_mkinitcpio_pacman_hooks(ctx, ctx.target)
+
+    ctx.state.setdefault("extra_packages", []).append("apple-bcm-firmware-local")
 
 
 def _configure_limine_boot(ctx: InstallContext, installer, config) -> None:

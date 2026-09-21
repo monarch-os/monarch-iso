@@ -100,6 +100,8 @@ def _expected_package_count(ctx: InstallContext | None = None) -> int:
         # from the baseline target transaction. cidata opts into installing it.
         if ctx is not None and ctx.tailscale_authkey_path is not None:
             count += 1
+        if ctx is not None:
+            count += len(ctx.state.get("extra_packages", []))
         return count
     except (OSError, ValueError, IndexError):
         return 0

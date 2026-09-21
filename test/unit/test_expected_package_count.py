@@ -29,16 +29,24 @@ class ExpectedPackageCountTest(unittest.TestCase):
         self.addCleanup(path_patch.stop)
 
     def test_baseline_excludes_conditional_tailscale(self):
-        ctx = types.SimpleNamespace(tailscale_authkey_path=None, include_preinstalls=True)
+        ctx = types.SimpleNamespace(tailscale_authkey_path=None, include_preinstalls=True, state={})
         self.assertEqual(phases._expected_package_count(ctx), 1015)
 
     def test_tailscale_cidata_counts_installed_package(self):
-        ctx = types.SimpleNamespace(tailscale_authkey_path=Path("/root/tailscale_authkey"), include_preinstalls=True)
+        ctx = types.SimpleNamespace(tailscale_authkey_path=Path("/root/tailscale_authkey"), include_preinstalls=True, state={})
         self.assertEqual(phases._expected_package_count(ctx), 1016)
 
     def test_minimal_profile_uses_its_resolved_transaction_count(self):
-        ctx = types.SimpleNamespace(tailscale_authkey_path=None, include_preinstalls=False)
+        ctx = types.SimpleNamespace(tailscale_authkey_path=None, include_preinstalls=False, state={})
         self.assertEqual(phases._expected_package_count(ctx), 900)
+
+    def test_locally_generated_firmware_counts_as_an_extra_package(self):
+        ctx = types.SimpleNamespace(
+            tailscale_authkey_path=None,
+            include_preinstalls=True,
+            state={"extra_packages": ["apple-bcm-firmware-local"]},
+        )
+        self.assertEqual(phases._expected_package_count(ctx), 1016)
 
 
 if __name__ == "__main__":
