@@ -138,7 +138,7 @@ printf 'checksum\n' >"$upload_iso.sha256"
 run_upload "$upload_iso"
 
 for suffix in "" ".sig" ".sha256"; do
-  grep -qxF "rclone|copy|$upload_iso$suffix|Monarch:monarch/|-P" "$work/rclone-log" ||
+  grep -qxF "rclone|copy|$upload_iso$suffix|Monarch:monarch-iso/|-P" "$work/rclone-log" ||
     fail "upload ships the ISO, its signature and its checksum, path spaces intact" \
       "$(cat "$work/rclone-log")"
 done

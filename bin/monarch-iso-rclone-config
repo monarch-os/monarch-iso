@@ -9,8 +9,9 @@ endpoint=$(op read "op://Shared/Cloudflare Buckets/iso.monarchlinux.com/endpoint
 cat > ~/.config/rclone/rclone.conf << EOF
 [Monarch]
 type = s3
-provider = AWS
+provider = Cloudflare
 access_key_id = $access_key
 secret_access_key = $secret_access_key
 endpoint = $endpoint
+no_check_bucket = true
 EOF
