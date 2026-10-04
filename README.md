@@ -469,6 +469,15 @@ The individual maintainer commands are:
 
 `monarch-iso-rclone-config` is for authorized Monarch maintainers and requires
 the 1Password CLI with access to the shared Cloudflare bucket credentials.
+The `Monarch` remote publishes to the `monarch-iso` bucket, managed by
+`monarch-iac` and exposed through `iso.monarchlinux.com`. Its account API token
+needs object read/write permissions only on that bucket; `no_check_bucket = true`
+avoids bucket administration requests.
+
+When rotating credentials, update `access_key_id` and `secret_access_key` in the
+shared 1Password item `Cloudflare Buckets`, section `iso.monarchlinux.com`, and
+regenerate the remote. Keep the endpoint unchanged. Verify a signed release and
+both its sidecars through the public domain before revoking the old token.
 
 ## Repository layout
 
