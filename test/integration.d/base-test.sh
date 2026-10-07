@@ -15,7 +15,9 @@ SSH_PORT="${MONARCH_INTEGRATION_SSH_PORT:-2322}"
 MEMORY="${MONARCH_INTEGRATION_MEMORY:-8192}"
 INSTALL_TIMEOUT="${MONARCH_INTEGRATION_INSTALL_TIMEOUT:-2400}"
 NO_PREVIEW="${MONARCH_INTEGRATION_NO_PREVIEW:-false}"
-BOOT_TIMEOUT=600
+BOOT_TIMEOUT="${MONARCH_INTEGRATION_BOOT_TIMEOUT:-600}"
+CPUS="${MONARCH_INTEGRATION_CPUS:-$(nproc)}"
+ACCEL="${MONARCH_INTEGRATION_ACCEL:-kvm}"
 
 GUEST_USER="monarch"
 GUEST_PASSWORD="monarch"
@@ -166,14 +168,20 @@ cleanup() {
   return $status
 }
 trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 start_vm() {
   local disk="$1" serial="$2"
   shift 2
 
+  local cpu=host network="user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+  [[ $ACCEL == "tcg" ]] && cpu=max
+  [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && network+=",restrict=on"
+
   qemu-system-x86_64 \
-    -cpu host -enable-kvm -machine q35,accel=kvm \
-    -smp "$(nproc)" \
+    -cpu "$cpu" -machine "q35,accel=$ACCEL" \
+    -smp "$CPUS" \
     -m "$MEMORY" \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$ACTIVE_OVMF" \
@@ -182,7 +190,7 @@ start_vm() {
     -device virtio-vga \
     -display none \
     -usb -device usb-tablet \
-    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
+    -netdev "$network" \
     -device virtio-net-pci,netdev=net0 \
     -qmp "unix:$QMP_SOCK,server,nowait" \
     -serial "file:$serial" \
@@ -374,152 +382,18 @@ EOF
   press ctrl-alt-f1
 }
 
-# ---------------------------------------------------------- cidata autoinstall
-
-# The configurator's own output files, synthesized for the 40G virtio disk the
-# VM boots from. Sizing mirrors the configurator: 1MiB gap, 2GiB ESP, the rest
-# btrfs minus the GPT backup reserve.
 build_cidata() {
-  local dir="$BASE_DIR/cidata" hash
-  local disk_bytes=$((40 * 1024 * 1024 * 1024))
-  local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
-  local boot_start=$mib boot_size=$((2 * gib))
-  local main_start=$((boot_size + boot_start))
-  local main_size=$((disk_bytes - main_start - mib))
-
-  rm -rf "$dir"
-  mkdir -p "$dir"
-
-  hash=$(openssl passwd -6 "$GUEST_PASSWORD")
-
-  cat >"$dir/user_credentials.json" <<EOF
-{
-    "root_enc_password": $(jq -Rn --arg v "$hash" '$v'),
-    "users": [
-        {
-            "enc_password": $(jq -Rn --arg v "$hash" '$v'),
-            "groups": [],
-            "sudo": true,
-            "username": "$GUEST_USER"
-        }
-    ]
-}
-EOF
-
-  cat >"$dir/user_configuration.json" <<EOF
-{
-    "app_config": null,
-    "archinstall-language": "English",
-    "auth_config": {},
-    "audio_config": { "audio": "pipewire" },
-    "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
-    "custom_commands": [],
-    "monarch_install": {
-        "schema_version": 1,
-        "mode": "full_disk",
-        "defer_provisioning": false,
-        "target_mount": "/mnt",
-        "boot": {
-            "esp_mount": "/boot",
-            "esp_path": "/EFI/limine",
-            "efi_binary": "limine_x64.efi",
-            "enable_fallback": true
-        },
-        "storage": { "kernel": "linux-cachyos" }
-    },
-    "disk_config": {
-        "config_type": "default_layout",
-        "device_modifications": [
-            {
-                "device": "/dev/vda",
-                "partitions": [
-                    {
-                        "btrfs": [],
-                        "dev_path": null,
-                        "flags": [ "boot", "esp" ],
-                        "fs_type": "fat32",
-                        "mount_options": [],
-                        "mountpoint": "/boot",
-                        "obj_id": "ea21d3f2-82bb-49cc-ab5d-6f81ae94e18d",
-                        "size": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $boot_size },
-                        "start": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $boot_start },
-                        "status": "create",
-                        "type": "primary"
-                    },
-                    {
-                        "btrfs": [
-                            { "mountpoint": "/", "name": "@" },
-                            { "mountpoint": "/home", "name": "@home" },
-                            { "mountpoint": "/var/log", "name": "@log" },
-                            { "mountpoint": "/var/cache/pacman/pkg", "name": "@pkg" }
-                        ],
-                        "dev_path": null,
-                        "flags": [],
-                        "fs_type": "btrfs",
-                        "mount_options": [ "compress=zstd" ],
-                        "mountpoint": null,
-                        "obj_id": "8c2c2b92-1070-455d-b76a-56263bab24aa",
-                        "size": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $main_size },
-                        "start": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $main_start },
-                        "status": "create",
-                        "type": "primary"
-                    }
-                ],
-                "wipe": true
-            }
-        ]
-    },
-    "hostname": "$GUEST_HOSTNAME",
-    "kernels": [ "linux-cachyos" ],
-    "network_config": { "type": "nm" },
-    "ntp": true,
-    "parallel_downloads": 8,
-    "script": null,
-    "services": [],
-    "swap": true,
-    "timezone": "UTC",
-    "locale_config": { "kb_layout": "us", "sys_enc": "UTF-8", "sys_lang": "en_US.UTF-8" },
-    "mirror_config": {
-        "custom_repositories": [],
-        "custom_servers": [
-            {"url": "https://mirror.cachyos.org/repo/\$arch/\$repo"},
-            {"url": "https://cdn.cachyos.org/repo/\$arch/\$repo"}
-        ],
-        "mirror_regions": {},
-        "optional_repositories": []
-    },
-    "packages": [
-        "base-devel",
-        "git",
-        "archlinux-keyring",
-        "cachyos-keyring",
-        "monarch-keyring",
-        "$RUNTIME_PACKAGE"
-    ],
-    "profile_config": { "gfx_driver": null, "greeter": null, "profile": {} },
-    "version": "3.0.9"
-}
-EOF
-
-  echo "Monarch Test" >"$dir/user_full_name.txt"
-  echo "test@monarch.org" >"$dir/user_email_address.txt"
-  cp "$SSH_KEY.pub" "$dir/authorized_keys"
-
-  rm -f "$CIDATA_IMG"
-  truncate -s 4M "$CIDATA_IMG"
-  mkfs.vfat -n CIDATA "$CIDATA_IMG" >/dev/null
-  mcopy -i "$CIDATA_IMG" "$dir"/* ::/
-}
-
-detect_packages() {
-  RUNTIME_PACKAGE=monarch
+  "$ROOT/bin/monarch-iso-cidata" \
+    --user "$GUEST_USER" --password "$GUEST_PASSWORD" --key "$SSH_KEY.pub" \
+    --disk /dev/vda --size 40G --hostname "$GUEST_HOSTNAME" \
+    --timezone UTC --keyboard us --full-name "Monarch Test" \
+    --email test@monarch.org --output "$CIDATA_IMG"
 }
 
 install_phase() {
   log "Installing $(basename "$ISO") unattended via cidata (headless)"
 
   [[ -f $SSH_KEY ]] || ssh-keygen -t ed25519 -N "" -q -C "monarch-integration" -f "$SSH_KEY"
-  detect_packages
   build_cidata
 
   # Build under a staging name: the finished base is promoted only after a
@@ -536,8 +410,9 @@ install_phase() {
     -device usb-storage,drive=cidata
 
   log "Waiting for the unattended install to finish (timeout ${INSTALL_TIMEOUT}s)"
-  local waited=0 text progress_name
+  local waited=0 text progress_name started=$SECONDS
   while true; do
+    waited=$((SECONDS - started))
     # An unattended install reboots on its own; SSH answering means the
     # installed system is up (cidata's authorized_keys enables sshd).
     if ssh_guest true 2>/dev/null; then
@@ -578,7 +453,6 @@ install_phase() {
     fi
 
     sleep 10
-    ((waited += 10))
   done
 
   log "Installed system is up. Saving base image."
