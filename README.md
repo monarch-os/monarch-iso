@@ -405,6 +405,10 @@ files, and saves the journal, install log, package list and console screenshot.
 It does not exercise encryption, the interactive wizard or a logged-in Niri
 session; use the interactive acceptance harness for those paths.
 
+During installation, the harness reports elapsed time and console OCR every
+two minutes and saves screenshots. SSH readiness and OCR calls have deadlines,
+and the installation and boot waits use wall-clock time.
+
 KVM is the default. Set `MONARCH_INTEGRATION_ACCEL=tcg` for runners without
 `/dev/kvm`; the harness uses QEMU's `max` CPU model in that mode. Software
 emulation takes longer, so adjust `--timeout` and

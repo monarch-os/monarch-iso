@@ -95,14 +95,14 @@ capture_console() {
   sleep 1
   screendump "$shot"
   [[ -s $shot ]] || return 0
-  magick "$shot" "$RUN_DIR/$name.png" 2>/dev/null || true
+  timeout --kill-after=5s 15s magick "$shot" "$RUN_DIR/$name.png" 2>/dev/null || true
   rm -f "$shot"
 }
 
 stop_vm() {
   vm_running || return 0
 
-  if ! ssh_guest "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1; then
+  if ! MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1; then
     qmp '"system_powerdown"' >/dev/null
   fi
 
@@ -214,10 +214,11 @@ start_vm_from_base() {
 ocr_screen() {
   local shot="$RUN_DIR/.screen.ppm" prepped="$RUN_DIR/.screen.png"
 
+  rm -f "$shot" "$prepped"
   screendump "$shot"
   [[ -s $shot ]] || return 0
-  magick "$shot" -colorspace gray -negate -resize 150% "$prepped" 2>/dev/null || return 0
-  tesseract "$prepped" - --psm 6 2>/dev/null || true
+  timeout --kill-after=5s 15s magick "$shot" -colorspace gray -negate -resize 150% "$prepped" 2>/dev/null || return 0
+  timeout --kill-after=5s 15s tesseract "$prepped" - --psm 6 2>/dev/null || true
 }
 
 wait_for_screen() {
@@ -287,7 +288,8 @@ type_text() {
 # --------------------------------------------------------------------- guest
 
 ssh_guest() {
-  ssh -i "$SSH_KEY" -p "$SSH_PORT" \
+  timeout --kill-after=5s "${MONARCH_INTEGRATION_SSH_DEADLINE:-0}s" \
+    ssh -i "$SSH_KEY" -p "$SSH_PORT" \
     -o BatchMode=yes \
     -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=no \
@@ -302,9 +304,10 @@ ssh_sudo() {
 }
 
 wait_for_ssh() {
-  local timeout="$1" failure_name="${2:-failure-ssh-timeout}" waited=0
+  local timeout="$1" failure_name="${2:-failure-ssh-timeout}" waited=0 started=$SECONDS
 
-  while ! ssh_guest true 2>/dev/null; do
+  while ! MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; do
+    waited=$((SECONDS - started))
     if ! vm_running; then
       echo "VM exited while waiting for SSH" >&2
       return 1
@@ -317,7 +320,6 @@ wait_for_ssh() {
     fi
 
     sleep 5
-    ((waited += 5))
   done
 }
 
@@ -410,12 +412,12 @@ install_phase() {
     -device usb-storage,drive=cidata
 
   log "Waiting for the unattended install to finish (timeout ${INSTALL_TIMEOUT}s)"
-  local waited=0 text progress_name started=$SECONDS
+  local waited=0 text progress_name started=$SECONDS next_progress=0
   while true; do
     waited=$((SECONDS - started))
     # An unattended install reboots on its own; SSH answering means the
     # installed system is up (cidata's authorized_keys enables sshd).
-    if ssh_guest true 2>/dev/null; then
+    if MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; then
       log "Install finished and rebooted into the installed system."
       capture_console "success-install-first-boot"
       break
@@ -431,6 +433,7 @@ install_phase() {
 
     if grep -qi "installation stopped" <<<"$text"; then
       capture_console "failure-install-stopped"
+      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
       echo "Install failed — screenshot saved to $RUN_DIR" >&2
       return 1
     fi
@@ -442,14 +445,17 @@ install_phase() {
 
     if ((waited >= INSTALL_TIMEOUT)); then
       capture_console "failure-install-timeout"
+      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
       echo "Timed out after ${INSTALL_TIMEOUT}s waiting for install" >&2
       return 1
     fi
 
-    if ((waited % 120 == 0)); then
+    if ((waited >= next_progress)); then
+      next_progress=$((waited + 120))
       printf -v progress_name 'success-install-progress-%04ds' "$waited"
       capture_console "$progress_name"
       echo "    ... installing (${waited}s)"
+      printf '%s\n' "${text:-No guest console text available}" | tee "$RUN_DIR/console.log"
     fi
 
     sleep 10
