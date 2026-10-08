@@ -76,6 +76,20 @@ trap 'rm -rf "$tmp"' EXIT
   grep -qF 'Install failed: guest state reports a failed phase' "$tmp/failure.log"
   grep -qF 'sanity_check rejected offline' "$tmp/failure.log"
   echo 'ok - guest phase failure aborts validation without reading the dashboard'
+
+  printf '[installer-state] complete\n' >"$RUN_DIR/install-guest.log"
+  ocr_screen() {
+    echo 'ERROR: Failed to open encryption mapping: The device PARTUUID=test is not a LUKS volume and the crypto= parameter was not specified.'
+  }
+  INSTALL_TIMEOUT=1
+  SECONDS=0
+  if install_phase >"$tmp/boot-failure.log" 2>&1; then
+    echo 'not ok - a failed root unlock must fail validation'
+    exit 1
+  fi
+  grep -qF 'Boot failed: root encryption mapping could not be opened' "$tmp/boot-failure.log"
+  grep -qF 'not a LUKS volume' "$RUN_DIR/console.log"
+  echo 'ok - an invalid LUKS boot configuration aborts without waiting for the install deadline'
 )
 
 if ! grep -q 'installing (121s)' "$tmp/progress.log"; then

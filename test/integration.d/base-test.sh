@@ -466,6 +466,13 @@ install_phase() {
 
     text=$(ocr_screen)
 
+    if grep -Eqi 'Failed to open encryption mapping|not a LUKS volume' <<<"$text"; then
+      capture_console "failure-root-unlock"
+      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
+      echo 'Boot failed: root encryption mapping could not be opened' >&2
+      return 1
+    fi
+
     if grep -qi "Reboot Now" <<<"$text"; then
       log "Install finished. Confirming the reboot prompt."
       capture_console "success-install-reboot"
@@ -495,7 +502,11 @@ install_phase() {
       next_progress=$((waited + 120))
       printf -v progress_name 'success-install-progress-%04ds' "$waited"
       capture_console "$progress_name"
-      echo "    ... installing (${waited}s)"
+      if grep -qFx '[installer-state] complete' "$RUN_DIR/install-guest.log" 2>/dev/null; then
+        echo "    ... installation complete; waiting for installed-system SSH (${waited}s)"
+      else
+        echo "    ... installing (${waited}s)"
+      fi
       report_install_progress
     fi
 
