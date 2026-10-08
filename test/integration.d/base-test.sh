@@ -306,6 +306,35 @@ ssh_sudo() {
   ssh_guest "echo $GUEST_PASSWORD | sudo -S -p '' bash -c $(printf %q "$1")"
 }
 
+collect_boot_diagnostics() {
+  local script
+  script=$(cat <<'EOF'
+printf '[boot-state] hostname: '; hostname
+printf '[boot-state] kernel: '; uname -r
+printf '[boot-state] root: '; findmnt -n -o SOURCE,FSTYPE,OPTIONS /
+printf '[boot-state] active cmdline: '; cat /proc/cmdline
+lsblk -o NAME,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS
+efibootmgr -v
+for file in /etc/kernel/cmdline /etc/default/limine /etc/limine-entry-tool.conf \
+  /etc/limine-entry-tool.d/*.conf /boot/limine.conf; do
+  [[ -f $file ]] || continue
+  printf '\n[boot-state] file: %s\n' "$file"
+  cat "$file"
+done
+for uki in /boot/EFI/Linux/*.efi /boot/EFI/BOOT/BOOTX64.EFI; do
+  [[ -f $uki ]] || continue
+  printf '\n[boot-state] EFI image: %s\n' "$uki"
+  sha256sum "$uki"
+  objdump -s -j .cmdline "$uki" || true
+done
+journalctl -b --no-pager
+EOF
+)
+  log "Collecting first-boot configuration before stopping the installed system"
+  MONARCH_INTEGRATION_SSH_DEADLINE=120 ssh_sudo "$script" >"$RUN_DIR/first-boot.log"
+  grep -F '[boot-state]' "$RUN_DIR/first-boot.log"
+}
+
 wait_for_ssh() {
   local timeout="$1" failure_name="${2:-failure-ssh-timeout}" waited=0 started=$SECONDS
 
@@ -318,6 +347,7 @@ wait_for_ssh() {
 
     if ((waited >= timeout)); then
       capture_console "$failure_name"
+      ocr_screen | tee "$RUN_DIR/console.log"
       echo "Timed out after ${timeout}s waiting for SSH" >&2
       return 1
     fi
@@ -421,6 +451,7 @@ install_phase() {
     # An unattended install reboots on its own; SSH answering means the
     # installed system is up (cidata's authorized_keys enables sshd).
     if MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; then
+      collect_boot_diagnostics
       log "Install finished and rebooted into the installed system."
       capture_console "success-install-first-boot"
       break

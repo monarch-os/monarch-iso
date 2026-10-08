@@ -23,7 +23,13 @@ trap 'rm -rf "$tmp"' EXIT
   build_cidata() { :; }
   qemu-img() { :; }
   start_vm() { touch "$1"; }
-  stop_vm() { :; }
+  collect_boot_diagnostics() { touch "$RUN_DIR/first-boot-collected"; }
+  stop_vm() {
+    [[ -f $RUN_DIR/first-boot-collected ]] || {
+      echo 'not ok - first-boot diagnostics must survive a failed cold boot' >&2
+      return 1
+    }
+  }
   vm_running() { return 0; }
   capture_console() { :; }
   ocr_screen() { echo 'Installing base system'; }
