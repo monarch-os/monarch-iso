@@ -292,7 +292,7 @@ type_text() {
 
 ssh_guest() {
   timeout --kill-after=5s "${MONARCH_INTEGRATION_SSH_DEADLINE:-0}s" \
-    ssh -i "$SSH_KEY" -p "$SSH_PORT" \
+    ssh -F /dev/null -i "$SSH_KEY" -p "$SSH_PORT" \
     -o BatchMode=yes \
     -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=no \
