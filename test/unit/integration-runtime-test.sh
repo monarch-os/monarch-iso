@@ -26,6 +26,8 @@ trap 'rm -rf "$tmp"' EXIT
   grep -qxF 'q35,accel=tcg' "$tmp/qemu-args"
   grep -qxF max "$tmp/qemu-args"
   grep -qxF "user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,restrict=on" "$tmp/qemu-args"
+  grep -qxF "file,id=install-status,path=$RUN_DIR/install-guest.log" "$tmp/qemu-args"
+  grep -qxF 'virtserialport,chardev=install-status,name=org.monarch.install-status' "$tmp/qemu-args"
   echo "ok - offline TCG boot retains only explicitly forwarded SSH"
 
   export MONARCH_INTEGRATION_OFFLINE=false

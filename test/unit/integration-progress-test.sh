@@ -27,6 +27,7 @@ trap 'rm -rf "$tmp"' EXIT
   vm_running() { return 0; }
   capture_console() { :; }
   ocr_screen() { echo 'Installing base system'; }
+  printf '[installer-state] phase: Installing CachyOS + Monarch (3/14)\nInstalling base system\n' >"$RUN_DIR/install-guest.log"
   probes=0
   ssh_guest() {
     probes=$((probes + 1))
@@ -57,6 +58,18 @@ trap 'rm -rf "$tmp"' EXIT
   fi
   grep -q 'Timed out after 120s' "$tmp/ssh-wait.log"
   echo 'ok - SSH readiness respects the wall-clock deadline'
+
+  printf '[installer-state] failed: Installing CachyOS + Monarch: sanity_check rejected offline\n' >"$RUN_DIR/install-guest.log"
+  ssh_guest() { return 1; }
+  sleep() { SECONDS=3000; }
+  SECONDS=0
+  if install_phase >"$tmp/failure.log" 2>&1; then
+    echo 'not ok - a failed guest phase must fail validation'
+    exit 1
+  fi
+  grep -qF 'Install failed: guest state reports a failed phase' "$tmp/failure.log"
+  grep -qF 'sanity_check rejected offline' "$tmp/failure.log"
+  echo 'ok - guest phase failure aborts validation without reading the dashboard'
 )
 
 if ! grep -q 'installing (121s)' "$tmp/progress.log"; then
@@ -65,7 +78,8 @@ if ! grep -q 'installing (121s)' "$tmp/progress.log"; then
   exit 1
 fi
 grep -q 'Installing base system' "$tmp/progress.log"
-echo 'ok - progress reports elapsed time and guest console even when a poll skips the interval'
+grep -qF '[installer-state] phase: Installing CachyOS + Monarch (3/14)' "$tmp/progress.log"
+echo 'ok - progress reports elapsed time and real installer state even when a poll skips the interval'
 
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/ssh" <<'EOF'

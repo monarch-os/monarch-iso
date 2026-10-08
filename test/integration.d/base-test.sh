@@ -192,6 +192,9 @@ start_vm() {
     -usb -device usb-tablet \
     -netdev "$network" \
     -device virtio-net-pci,netdev=net0 \
+    -device virtio-serial-pci \
+    -chardev "file,id=install-status,path=$RUN_DIR/install-guest.log" \
+    -device virtserialport,chardev=install-status,name=org.monarch.install-status \
     -qmp "unix:$QMP_SOCK,server,nowait" \
     -serial "file:$serial" \
     -pidfile "$PIDFILE" \
@@ -423,6 +426,13 @@ install_phase() {
       break
     fi
 
+    if [[ -s $RUN_DIR/install-guest.log ]] && grep -qF '[installer-state] failed:' "$RUN_DIR/install-guest.log"; then
+      capture_console "failure-install-stopped"
+      report_install_progress
+      echo 'Install failed: guest state reports a failed phase' >&2
+      return 1
+    fi
+
     text=$(ocr_screen)
 
     if grep -qi "Reboot Now" <<<"$text"; then
@@ -455,7 +465,7 @@ install_phase() {
       printf -v progress_name 'success-install-progress-%04ds' "$waited"
       capture_console "$progress_name"
       echo "    ... installing (${waited}s)"
-      printf '%s\n' "${text:-No guest console text available}" | tee "$RUN_DIR/console.log"
+      report_install_progress
     fi
 
     sleep 10
@@ -464,4 +474,12 @@ install_phase() {
   log "Installed system is up. Saving base image."
   stop_vm
   mv "$BASE_DISK.building" "$BASE_DISK"
+}
+
+report_install_progress() {
+  if [[ -s $RUN_DIR/install-guest.log ]]; then
+    tail -n 24 "$RUN_DIR/install-guest.log"
+  else
+    echo 'Waiting for live installer telemetry; console screenshots are being saved.'
+  fi
 }

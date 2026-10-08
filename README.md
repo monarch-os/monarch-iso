@@ -405,8 +405,9 @@ files, and saves the journal, install log, package list and console screenshot.
 It does not exercise encryption, the interactive wizard or a logged-in Niri
 session; use the interactive acceptance harness for those paths.
 
-During installation, the harness reports elapsed time and console OCR every
-two minutes and saves screenshots. SSH readiness and OCR calls have deadlines,
+During installation, the harness reports elapsed time, the orchestrator's phase
+and recent installer log messages every two minutes, through a dedicated virtio
+port. It also saves screenshots. SSH readiness and OCR calls have deadlines,
 and the installation and boot waits use wall-clock time.
 
 KVM is the default. Set `MONARCH_INTEGRATION_ACCEL=tcg` for runners without
