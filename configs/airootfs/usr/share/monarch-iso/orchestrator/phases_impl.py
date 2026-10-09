@@ -1212,6 +1212,26 @@ def _stage_provisioning_luks_unlock(ctx: InstallContext, provisioning_dir) -> No
     files_dropin.write_text("FILES+=(/etc/monarch/provisioning.key)\n")
 
 
+def _configure_root_encryption_hooks(ctx: InstallContext) -> None:
+    dropin = ctx.target / "etc/mkinitcpio.conf.d/zz-monarch-unencrypted-root.conf"
+    if ctx.encrypt:
+        dropin.unlink(missing_ok=True)
+        return
+
+    # encrypt falls back to decrypting root=; filter after the vendor HOOKS list.
+    dropin.parent.mkdir(parents=True, exist_ok=True)
+    dropin.write_text('''_monarch_plain_root_hooks=()
+for _monarch_plain_root_hook in "${HOOKS[@]}"; do
+  case $_monarch_plain_root_hook in
+    encrypt | sd-encrypt) ;;
+    *) _monarch_plain_root_hooks+=("$_monarch_plain_root_hook") ;;
+  esac
+done
+HOOKS=("${_monarch_plain_root_hooks[@]}")
+unset _monarch_plain_root_hooks _monarch_plain_root_hook
+''')
+
+
 def finalize_limine_boot(ctx: InstallContext) -> None:
     """Finalize Limine after target system setup has written all dynamic
     boot drop-ins (hibernation, hardware quirks, protected-mode ESP settings).
@@ -1247,6 +1267,7 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
     if not limine_conf.exists():
         raise RuntimeError(f"{limine_conf} missing")
 
+    _configure_root_encryption_hooks(ctx)
     subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
 
     subprocess.run(
@@ -1625,6 +1646,9 @@ def validate_boot(ctx: InstallContext) -> None:
         if ctx.encrypt:
             for uki in installed_ukis:
                 _validate_encrypted_uki(uki)
+        else:
+            for uki in installed_ukis:
+                _validate_unencrypted_uki(uki)
 
         post = _read_efibootmgr()
         if not _find_label_entries(post["entries"], "Limine"):
@@ -1635,6 +1659,22 @@ def validate_boot(ctx: InstallContext) -> None:
 
     if ctx.defer_provisioning:
         _validate_provisioning_state(ctx)
+
+
+def _validate_unencrypted_uki(uki: Path) -> None:
+    try:
+        archive = subprocess.run(
+            ["lsinitcpio", str(uki)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        raise RuntimeError(f"Could not inspect unencrypted UKI {uki}: {detail}") from exc
+
+    if "hooks/encrypt" in {entry.rstrip() for entry in archive.splitlines()}:
+        raise RuntimeError(f"{uki} contains encrypt, which tries to unlock an unencrypted root")
 
 
 def _validate_encrypted_uki(uki: Path) -> None:

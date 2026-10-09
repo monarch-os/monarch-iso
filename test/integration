@@ -14,6 +14,8 @@
 #   --memory MB    VM memory (default 8192)
 #   --timeout SECS Install timeout (default 2400)
 #   --no-preview   Do not open the collected screenshots in imv
+#   --offline      Block guest network access except forwarded SSH
+#   --cpus N       Guest vCPU count (default: host CPU count)
 
 set -euo pipefail
 
@@ -27,11 +29,15 @@ export MONARCH_INTEGRATION_SSH_PORT=2322
 export MONARCH_INTEGRATION_MEMORY=8192
 export MONARCH_INTEGRATION_INSTALL_TIMEOUT=2400
 export MONARCH_INTEGRATION_NO_PREVIEW=false
+export MONARCH_INTEGRATION_OFFLINE=false
+export MONARCH_INTEGRATION_CPUS="${MONARCH_INTEGRATION_CPUS:-$(nproc)}"
 
 while (($#)); do
   case "$1" in
     --reuse-base) REUSE_BASE=true ;;
     --no-preview) MONARCH_INTEGRATION_NO_PREVIEW=true ;;
+    --offline) MONARCH_INTEGRATION_OFFLINE=true ;;
+    --cpus) MONARCH_INTEGRATION_CPUS="$2"; shift ;;
     --port) MONARCH_INTEGRATION_SSH_PORT="$2"; shift ;;
     --memory) MONARCH_INTEGRATION_MEMORY="$2"; shift ;;
     --timeout) MONARCH_INTEGRATION_INSTALL_TIMEOUT="$2"; shift ;;
@@ -67,7 +73,13 @@ else
   done
 fi
 
-monarch-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+if command -v monarch-pkg-add >/dev/null; then
+  monarch-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng libisoburn
+fi
+
+for dependency in qemu-system-x86_64 qemu-img socat magick tesseract xorrisofs ssh ssh-keygen jq openssl; do
+  command -v "$dependency" >/dev/null || { echo "Missing integration dependency: $dependency" >&2; exit 1; }
+done
 
 export MONARCH_INTEGRATION_ISO
 MONARCH_INTEGRATION_ISO=$(realpath "$ISO")

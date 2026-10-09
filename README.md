@@ -387,7 +387,39 @@ throwaway overlays:
 ```
 
 `test/integration` accepts `--port`, `--memory`, `--timeout`, `--reuse-base`, and
-`--no-preview`.
+`--no-preview`, `--offline`, and `--cpus`. `--offline` uses QEMU's restricted
+user network: the guest cannot reach the Internet or the host, while the explicit
+SSH forwarding remains available to the harness. This tests the bundled offline
+packages without requiring console-only assertions.
+
+The nightly installation gate can run without a GPU or a Monarch host:
+
+```bash
+./test/integration release/monarch.iso installed-system --offline --cpus 2 --no-preview
+```
+
+It installs onto a fresh 40 GiB disk using `monarch-iso-cidata`, then cold-boots
+an overlay without the ISO or cidata drive. It checks the installed btrfs root,
+hostname, runtime and desktop packages, command routes, SDDM service and EFI
+files, and saves the journal, install log, package list and console screenshot.
+Before stopping the first boot, it saves `first-boot.log` with the active kernel
+command line, root device, firmware entries, Limine configuration, EFI image
+command lines and journal. These diagnostics remain available if the subsequent
+cold boot fails before SSH becomes reachable.
+It does not exercise encryption, the interactive wizard or a logged-in Niri
+session; use the interactive acceptance harness for those paths.
+
+During installation, the harness reports elapsed time, the orchestrator's phase
+and recent installer log messages every two minutes, through a dedicated virtio
+port. It also saves screenshots. SSH readiness and OCR calls have deadlines,
+and the installation and boot waits use wall-clock time.
+
+KVM is the default. Set `MONARCH_INTEGRATION_ACCEL=tcg` for runners without
+`/dev/kvm`; the harness uses QEMU's `max` CPU model in that mode. Software
+emulation takes longer, so adjust `--timeout` and
+`MONARCH_INTEGRATION_BOOT_TIMEOUT` as needed. Hosts without `monarch-pkg-add`
+must preinstall QEMU, edk2-ovmf, socat, ImageMagick, Tesseract with English data,
+libisoburn, OpenSSH, jq and OpenSSL.
 
 The interactive acceptance harness drives the actual configurator through QMP
 keystrokes and OCR, then runs the Monarch acceptance suite in the installed VM:
