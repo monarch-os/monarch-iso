@@ -118,15 +118,25 @@ trap 'rm -rf "$tmp"' EXIT
   ocr_screen() {
     echo 'ERROR: Failed to open encryption mapping: The device PARTUUID=test is not a LUKS volume and the crypto= parameter was not specified.'
   }
-  INSTALL_TIMEOUT=1
+  INSTALL_TIMEOUT=120
+  probes=0
+  ssh_guest() {
+    if [[ $1 != "true" ]]; then
+      echo 'Startup finished in 10s'
+      return
+    fi
+    probes=$((probes + 1))
+    ((probes >= 2))
+  }
+  sleep() { SECONDS=$((SECONDS + 1)); }
   SECONDS=0
-  if install_phase >"$tmp/boot-failure.log" 2>&1; then
-    echo 'not ok - a failed root unlock must fail validation'
+  if ! install_phase >"$tmp/boot-warning.log" 2>&1; then
+    echo 'not ok - a non-LUKS warning rejected a guest that would reach SSH'
+    cat "$tmp/boot-warning.log"
     exit 1
   fi
-  grep -qF 'Boot failed: root encryption mapping could not be opened' "$tmp/boot-failure.log"
-  grep -qF 'not a LUKS volume' "$RUN_DIR/console.log"
-  echo 'ok - an invalid LUKS boot configuration aborts without waiting for the install deadline'
+  grep -qF 'Install finished and rebooted into the installed system.' "$tmp/boot-warning.log"
+  echo 'ok - a non-LUKS warning cannot reject a guest that reaches SSH'
 )
 
 if ! grep -q 'installing (119s)' "$tmp/progress.log"; then

@@ -434,13 +434,6 @@ install_phase() {
 
     text=$(ocr_screen)
 
-    if grep -Eqi 'Failed to open encryption mapping|not a LUKS volume' <<<"$text"; then
-      capture_console "failure-root-unlock"
-      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
-      echo 'Boot failed: root encryption mapping could not be opened' >&2
-      return 1
-    fi
-
     if grep -qi "Reboot Now" <<<"$text"; then
       log "Install finished. Confirming the reboot prompt."
       capture_console "success-install-reboot"
