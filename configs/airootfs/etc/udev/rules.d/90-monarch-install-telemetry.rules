@@ -1,1 +1,0 @@
-ACTION=="add", SUBSYSTEM=="virtio-ports", ATTR{name}=="org.monarch.install-status", TAG+="systemd", ENV{SYSTEMD_WANTS}="monarch-install-telemetry.service"

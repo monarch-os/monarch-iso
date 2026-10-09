@@ -1,5 +1,0 @@
-[Unit]
-Description=Forward Monarch installer state to the VM test runner
-
-[Service]
-ExecStart=/usr/local/bin/monarch-install-telemetry

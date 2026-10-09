@@ -30,9 +30,8 @@ trap 'rm -rf "$tmp"' EXIT
     }
   }
   vm_running() { return 0; }
-  capture_console() { :; }
+  capture_console() { echo "$1" >>"$tmp/install-captures"; }
   ocr_screen() { echo 'Installing base system'; }
-  printf '[installer-state] phase: Installing CachyOS + Monarch (3/14)\nInstalling base system\n' >"$RUN_DIR/install-guest.log"
   probes=0
   ssh_guest() {
     if [[ $1 != "true" ]]; then
@@ -90,19 +89,32 @@ trap 'rm -rf "$tmp"' EXIT
   grep -qF 'waiting for SSH (70s)' "$tmp/ssh-progress.log"
   echo 'ok - a slow boot reports SSH progress and saves console screenshots'
 
-  printf '[installer-state] failed: Installing CachyOS + Monarch: sanity_check rejected offline\n' >"$RUN_DIR/install-guest.log"
+  ocr_screen() {
+    printf 'Monarch installation stopped\nTypeError: Installer.sanity_check rejected offline\n'
+  }
   ssh_guest() { return 1; }
   sleep() { SECONDS=3000; }
   SECONDS=0
   if install_phase >"$tmp/failure.log" 2>&1; then
-    echo 'not ok - a failed guest phase must fail validation'
+    echo 'not ok - a stopped installer must fail validation'
     exit 1
   fi
-  grep -qF 'Install failed: guest state reports a failed phase' "$tmp/failure.log"
-  grep -qF 'sanity_check rejected offline' "$tmp/failure.log"
-  echo 'ok - guest phase failure aborts validation without reading the dashboard'
+  grep -qF 'Install failed' "$tmp/failure.log"
+  grep -qF 'sanity_check rejected offline' "$RUN_DIR/console.log"
+  echo 'ok - a stopped installer aborts validation and preserves console diagnostics'
 
-  printf '[installer-state] complete\n' >"$RUN_DIR/install-guest.log"
+  ocr_screen() { echo 'Installing base system'; }
+  sleep() { SECONDS=121; }
+  INSTALL_TIMEOUT=120
+  SECONDS=0
+  if install_phase >"$tmp/install-timeout.log" 2>&1; then
+    echo 'not ok - an installation past its deadline was accepted'
+    exit 1
+  fi
+  grep -qF 'Timed out after 120s waiting for install' "$tmp/install-timeout.log"
+  grep -qF 'Installing base system' "$RUN_DIR/console.log"
+  echo 'ok - a stalled installation fails at its deadline and preserves console diagnostics'
+
   ocr_screen() {
     echo 'ERROR: Failed to open encryption mapping: The device PARTUUID=test is not a LUKS volume and the crypto= parameter was not specified.'
   }
@@ -117,14 +129,13 @@ trap 'rm -rf "$tmp"' EXIT
   echo 'ok - an invalid LUKS boot configuration aborts without waiting for the install deadline'
 )
 
-if ! grep -q 'installing (121s)' "$tmp/progress.log"; then
+if ! grep -q 'installing (119s)' "$tmp/progress.log"; then
   echo 'not ok - progress is reported when a poll skips the exact interval'
   cat "$tmp/progress.log"
   exit 1
 fi
-grep -q 'Installing base system' "$tmp/progress.log"
-grep -qF '[installer-state] phase: Installing CachyOS + Monarch (3/14)' "$tmp/progress.log"
-echo 'ok - progress reports elapsed time and real installer state even when a poll skips the interval'
+grep -qF 'success-install-progress-0121s' "$tmp/install-captures"
+echo 'ok - progress reports elapsed time and saves screenshots even when a poll skips the interval'
 
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/ssh" <<'EOF'

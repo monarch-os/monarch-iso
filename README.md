@@ -389,7 +389,7 @@ throwaway overlays:
 The harness follows [Omarchy ISO's integration tests at `8b17699`](https://github.com/omacom/omarchy-iso/tree/8b17699997460b260e2320807602f50025cd3b4e/test).
 The `boot` scenario, install timing collection and SSH progress captures are
 ported from that revision. Monarch keeps its production cidata generator,
-offline networking, TCG support, bounded probes and live installer telemetry.
+offline networking, TCG support and bounded probes.
 
 `test/integration` accepts `--port`, `--memory`, `--timeout`, `--reuse-base`, and
 `--no-preview`, `--offline`, and `--cpus`. `--offline` uses QEMU's restricted
@@ -415,10 +415,11 @@ so they remain available if a subsequent boot fails before SSH is reachable.
 It does not exercise encryption, the interactive wizard or a logged-in Niri
 session; use the interactive acceptance harness for those paths.
 
-During installation, the harness reports elapsed time, the orchestrator's phase
-and recent installer log messages every two minutes, through a dedicated virtio
-port. It also saves screenshots. SSH readiness and OCR calls have deadlines,
-and the installation and boot waits use wall-clock time.
+During installation, the harness follows upstream's console-based diagnostics:
+it reports elapsed time every 30 seconds, saves screenshots every two minutes,
+and detects a stopped installer through OCR. Installer logs and timings are
+collected after SSH becomes available. SSH readiness and OCR calls have
+deadlines, and the installation and boot waits use wall-clock time.
 
 KVM is the default. Set `MONARCH_INTEGRATION_ACCEL=tcg` for runners without
 `/dev/kvm`; the harness uses QEMU's `max` CPU model in that mode. Software

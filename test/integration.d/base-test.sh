@@ -193,9 +193,6 @@ start_vm() {
     -usb -device usb-tablet \
     -netdev "$network" \
     -device virtio-net-pci,netdev=net0 \
-    -device virtio-serial-pci \
-    -chardev "file,id=install-status,path=$RUN_DIR/install-guest.log" \
-    -device virtserialport,chardev=install-status,name=org.monarch.install-status \
     -qmp "unix:$QMP_SOCK,server,nowait" \
     -serial "file:$serial" \
     -pidfile "$PIDFILE" \
@@ -424,7 +421,7 @@ install_phase() {
     -device usb-storage,drive=cidata
 
   log "Waiting for the unattended install to finish (timeout ${INSTALL_TIMEOUT}s)"
-  local waited=0 text progress_name started=$SECONDS next_progress=0
+  local waited=0 text progress_name started=$SECONDS next_progress=0 next_note=0
   while true; do
     waited=$((SECONDS - started))
     # An unattended install reboots on its own; SSH answering means the
@@ -433,13 +430,6 @@ install_phase() {
       log "Install finished and rebooted into the installed system."
       capture_console "success-install-first-boot"
       break
-    fi
-
-    if [[ -s $RUN_DIR/install-guest.log ]] && grep -qF '[installer-state] failed:' "$RUN_DIR/install-guest.log"; then
-      capture_console "failure-install-stopped"
-      report_install_progress
-      echo 'Install failed: guest state reports a failed phase' >&2
-      return 1
     fi
 
     text=$(ocr_screen)
@@ -480,12 +470,10 @@ install_phase() {
       next_progress=$((waited + 120))
       printf -v progress_name 'success-install-progress-%04ds' "$waited"
       capture_console "$progress_name"
-      if grep -qFx '[installer-state] complete' "$RUN_DIR/install-guest.log" 2>/dev/null; then
-        echo "    ... installation complete; waiting for installed-system SSH (${waited}s)"
-      else
-        echo "    ... installing (${waited}s)"
-      fi
-      report_install_progress
+    fi
+    if ((waited >= next_note)); then
+      next_note=$((waited + 30))
+      echo "    ... installing (${waited}s)"
     fi
 
     sleep 10
@@ -501,12 +489,4 @@ install_phase() {
   log "Installed system is up. Saving base image."
   stop_vm
   mv "$BASE_DISK.building" "$BASE_DISK"
-}
-
-report_install_progress() {
-  if [[ -s $RUN_DIR/install-guest.log ]]; then
-    tail -n 24 "$RUN_DIR/install-guest.log"
-  else
-    echo 'Waiting for live installer telemetry; console screenshots are being saved.'
-  fi
 }
