@@ -23,10 +23,9 @@ trap 'rm -rf "$tmp"' EXIT
   build_cidata() { :; }
   qemu-img() { :; }
   start_vm() { touch "$1"; }
-  collect_boot_diagnostics() { touch "$RUN_DIR/first-boot-collected"; }
   stop_vm() {
-    [[ -f $RUN_DIR/first-boot-collected ]] || {
-      echo 'not ok - first-boot diagnostics must survive a failed cold boot' >&2
+    [[ -s $BASE_DIR/monarch-install-timing.json && -s $BASE_DIR/monarch-install.log && -s $BASE_DIR/first-boot-systemd-analyze.txt ]] || {
+      echo 'not ok - install and first-boot diagnostics must be saved before shutdown' >&2
       return 1
     }
   }
@@ -36,8 +35,19 @@ trap 'rm -rf "$tmp"' EXIT
   printf '[installer-state] phase: Installing CachyOS + Monarch (3/14)\nInstalling base system\n' >"$RUN_DIR/install-guest.log"
   probes=0
   ssh_guest() {
+    if [[ $1 != "true" ]]; then
+      echo 'Startup finished in 10s'
+      return
+    fi
     probes=$((probes + 1))
     ((probes >= 4))
+  }
+  ssh_sudo() {
+    case "$1" in
+      *monarch-install-timing.json*) echo '{"phases":[]}' ;;
+      *monarch-install.log*) echo 'Installation complete.' ;;
+      *) return 1 ;;
+    esac
   }
   sleeps=0
   sleep() {
@@ -50,6 +60,8 @@ trap 'rm -rf "$tmp"' EXIT
   }
   SECONDS=0
   install_phase >"$tmp/progress.log"
+  grep -qF 'Installation complete.' "$BASE_DIR/monarch-install.log"
+  echo 'ok - install timings, log and first-boot timings survive a later boot failure'
 
   probes=0
   ssh_guest() {
@@ -64,6 +76,19 @@ trap 'rm -rf "$tmp"' EXIT
   fi
   grep -q 'Timed out after 120s' "$tmp/ssh-wait.log"
   echo 'ok - SSH readiness respects the wall-clock deadline'
+
+  probes=0
+  capture_console() { echo "$1" >>"$tmp/captures"; }
+  ssh_guest() {
+    probes=$((probes + 1))
+    ((probes >= 4))
+  }
+  sleep() { SECONDS=$((SECONDS + 35)); }
+  SECONDS=0
+  wait_for_ssh 120 >"$tmp/ssh-progress.log"
+  grep -qF 'waiting-ssh-0035s' "$tmp/captures"
+  grep -qF 'waiting for SSH (70s)' "$tmp/ssh-progress.log"
+  echo 'ok - a slow boot reports SSH progress and saves console screenshots'
 
   printf '[installer-state] failed: Installing CachyOS + Monarch: sanity_check rejected offline\n' >"$RUN_DIR/install-guest.log"
   ssh_guest() { return 1; }
@@ -116,7 +141,7 @@ if ! PATH="$tmp/bin:$PATH" MONARCH_INTEGRATION_ISO="$tmp/ssh-candidate.iso" \
     if ssh_guest true; then
       exit 1
     else
-      [[ $? == 124 ]]
+      (( $? == 124 ))
     fi
   ' _ "$root/test/integration.d/base-test.sh"; then
   echo 'not ok - the SSH deadline terminates a connected but stalled probe'

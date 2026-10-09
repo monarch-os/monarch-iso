@@ -17,7 +17,7 @@ snapshot() {
   [[ ! -f $log ]] || tail -n 20 "$log"
 }
 
-if [[ ${1:-} == --snapshot ]]; then
+if [[ ${1:-} == "--snapshot" ]]; then
   snapshot "$2" "$3"
   exit 0
 fi

@@ -14,6 +14,7 @@ ISO="$MONARCH_INTEGRATION_ISO"
 SSH_PORT="${MONARCH_INTEGRATION_SSH_PORT:-2322}"
 MEMORY="${MONARCH_INTEGRATION_MEMORY:-8192}"
 INSTALL_TIMEOUT="${MONARCH_INTEGRATION_INSTALL_TIMEOUT:-2400}"
+DISK_CACHE="${MONARCH_INTEGRATION_DISK_CACHE:-}"
 NO_PREVIEW="${MONARCH_INTEGRATION_NO_PREVIEW:-false}"
 BOOT_TIMEOUT="${MONARCH_INTEGRATION_BOOT_TIMEOUT:-600}"
 CPUS="${MONARCH_INTEGRATION_CPUS:-$(nproc)}"
@@ -185,7 +186,7 @@ start_vm() {
     -m "$MEMORY" \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$ACTIVE_OVMF" \
-    -drive file="$disk",format=qcow2,if=none,id=drive0 \
+    -drive file="$disk",format=qcow2,if=none,id=drive0${DISK_CACHE:+,cache=$DISK_CACHE} \
     -device virtio-blk-pci,drive=drive0,bootindex=1 \
     -device virtio-vga \
     -display none \
@@ -306,53 +307,31 @@ ssh_sudo() {
   ssh_guest "echo $GUEST_PASSWORD | sudo -S -p '' bash -c $(printf %q "$1")"
 }
 
-collect_boot_diagnostics() {
-  local script
-  script=$(cat <<'EOF'
-printf '[boot-state] hostname: '; hostname
-printf '[boot-state] kernel: '; uname -r
-printf '[boot-state] root: '; findmnt -n -o SOURCE,FSTYPE,OPTIONS /
-printf '[boot-state] active cmdline: '; cat /proc/cmdline
-lsblk -o NAME,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS
-efibootmgr -v
-for file in /etc/kernel/cmdline /etc/default/limine /etc/limine-entry-tool.conf \
-  /etc/limine-entry-tool.d/*.conf /boot/limine.conf; do
-  [[ -f $file ]] || continue
-  printf '\n[boot-state] file: %s\n' "$file"
-  cat "$file"
-done
-for uki in /boot/EFI/Linux/*.efi /boot/EFI/BOOT/BOOTX64.EFI; do
-  [[ -f $uki ]] || continue
-  printf '\n[boot-state] EFI image: %s\n' "$uki"
-  sha256sum "$uki"
-  objdump -s -j .cmdline "$uki" || true
-done
-journalctl -b --no-pager
-EOF
-)
-  log "Collecting first-boot configuration before stopping the installed system"
-  MONARCH_INTEGRATION_SSH_DEADLINE=120 ssh_sudo "$script" >"$RUN_DIR/first-boot.log"
-  grep -F '[boot-state]' "$RUN_DIR/first-boot.log"
-}
-
 wait_for_ssh() {
-  local timeout="$1" failure_name="${2:-failure-ssh-timeout}" waited=0 started=$SECONDS
+  local timeout="$1" failure_name="${2:-failure-ssh-timeout}"
+  local started=$SECONDS next_note=30 progress_name
 
   while ! MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; do
-    waited=$((SECONDS - started))
     if ! vm_running; then
       echo "VM exited while waiting for SSH" >&2
       return 1
     fi
 
-    if ((waited >= timeout)); then
+    if ((SECONDS - started >= timeout)); then
       capture_console "$failure_name"
       ocr_screen | tee "$RUN_DIR/console.log"
       echo "Timed out after ${timeout}s waiting for SSH" >&2
       return 1
     fi
 
-    sleep 5
+    if ((SECONDS - started >= next_note)); then
+      printf -v progress_name 'waiting-ssh-%04ds' "$((SECONDS - started))"
+      capture_console "$progress_name"
+      echo "    ... waiting for SSH ($((SECONDS - started))s)"
+      ((next_note += 30))
+    fi
+
+    sleep 2
   done
 }
 
@@ -451,7 +430,6 @@ install_phase() {
     # An unattended install reboots on its own; SSH answering means the
     # installed system is up (cidata's authorized_keys enables sshd).
     if MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; then
-      collect_boot_diagnostics
       log "Install finished and rebooted into the installed system."
       capture_console "success-install-first-boot"
       break
@@ -512,6 +490,13 @@ install_phase() {
 
     sleep 10
   done
+
+  MONARCH_INTEGRATION_SSH_DEADLINE=30 ssh_sudo "cat /var/log/monarch-install-timing.json" \
+    >"$BASE_DIR/monarch-install-timing.json" 2>/dev/null || true
+  MONARCH_INTEGRATION_SSH_DEADLINE=30 ssh_sudo "cat /var/log/monarch-install.log" \
+    >"$BASE_DIR/monarch-install.log" 2>/dev/null || true
+  MONARCH_INTEGRATION_SSH_DEADLINE=150 ssh_guest "timeout 120 systemctl is-system-running --wait >/dev/null; systemd-analyze" \
+    >"$BASE_DIR/first-boot-systemd-analyze.txt" 2>/dev/null || true
 
   log "Installed system is up. Saving base image."
   stop_vm

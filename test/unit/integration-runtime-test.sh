@@ -38,6 +38,11 @@ trap 'rm -rf "$tmp"' EXIT
   ! grep -q restrict=on "$tmp/qemu-args"
   echo "ok - normal integration runs retain KVM and network access"
 
+  DISK_CACHE=none
+  start_vm "$tmp/disk.qcow2" "$tmp/serial.log"
+  grep -qxF "file=$tmp/disk.qcow2,format=qcow2,if=none,id=drive0,cache=none" "$tmp/qemu-args"
+  echo "ok - disk cache can match upstream CI timing measurements"
+
   mkdir -p "$tmp/bin"
   cat >"$tmp/bin/xorrisofs" <<'EOF'
 #!/bin/bash
