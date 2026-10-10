@@ -116,10 +116,11 @@ Full-disk encryption is the default and Ctrl+C on the disk confirmation toggles
 it off rather than aborting — the same way omarchy-iso quattro offers the
 choice. The configurator then omits the `disk_encryption` block from
 `user_configuration.json` and the passphrase from `user_credentials.json`, and
-archinstall installs to a plain btrfs root. Nothing in `monarch/` needs to know:
-its mkinitcpio `HOOKS` carry `encrypt` either way (a no-op without a
-`cryptdevice=` cmdline) and `monarch-drive-password` already handles a machine
-with no LUKS volumes.
+archinstall installs to a plain btrfs root. The mkinitcpio hooks follow Omarchy,
+including `encrypt`. On a plain root it can print "not a LUKS volume" while
+leaving `root=` unchanged and allowing boot to continue; that message alone
+must not fail integration validation. `monarch-drive-password` already handles
+a machine with no LUKS volumes.
 
 `test/install-config-test.sh` runs `write-install-config` against fake answers,
 because the wizard itself needs a TTY and a malformed heredoc is otherwise

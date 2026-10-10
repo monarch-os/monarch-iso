@@ -29,6 +29,15 @@ trap 'rm -rf "$work"' EXIT
 # path, so relocating the script is what points it at the sandbox.
 sandbox="$work/repo"
 mkdir -p "$sandbox/bin" "$sandbox/release" "$work/stubs"
+export TEST_REAL_SHA256SUM
+TEST_REAL_SHA256SUM=$(command -v sha256sum)
+cat >"$work/stubs/sha256sum" <<'STUB'
+#!/bin/bash
+if [[ -n ${SHA256SUM_FAIL_ON:-} && ${!#} == "$SHA256SUM_FAIL_ON" ]]; then
+  exit 1
+fi
+exec "$TEST_REAL_SHA256SUM" "$@"
+STUB
 cp "$ROOT/bin/monarch-iso-release" "$sandbox/bin/"
 printf 'not really an iso\n' >"$sandbox/release/monarch-2099.01.01-x86_64-dev.iso"
 
@@ -100,20 +109,19 @@ if (cd "$sandbox/release" && sha256sum -c --status monarch-9.9.9.iso.sha256 2>/d
 fi
 pass "sha256sum -c rejects a corrupted ISO"
 
-# An unreadable ISO must stop the release rather than publish an empty digest
+# A checksum failure must stop the release rather than publish an empty digest
 # beside a stale sidecar from the previous one.
 stale="$sandbox/release/monarch-8.8.8.iso.sha256"
 printf 'deadbeef  monarch-8.8.8.iso\n' >"$stale"
 rm "$sandbox/release/monarch-2099.01.01-x86_64-dev.iso"
 printf 'not really an iso\n' >"$sandbox/release/monarch-2099.01.02-x86_64-dev.iso"
 cp "$sandbox/release/monarch-2099.01.02-x86_64-dev.iso" "$sandbox/release/monarch-8.8.8.iso"
-chmod 000 "$sandbox/release/monarch-8.8.8.iso"
 
 set +e
-PATH="$work/stubs:$PATH" "$sandbox/bin/monarch-iso-release" --no-make 8.8.8 >/dev/null 2>&1
+SHA256SUM_FAIL_ON="$sandbox/release/monarch-8.8.8.iso" PATH="$work/stubs:$PATH" \
+  "$sandbox/bin/monarch-iso-release" --no-make 8.8.8 >/dev/null 2>&1
 release_status=$?
 set -e
-chmod 644 "$sandbox/release/monarch-8.8.8.iso"
 
 (( release_status != 0 )) ||
   fail "release stops when the ISO cannot be checksummed" "exit status was 0"

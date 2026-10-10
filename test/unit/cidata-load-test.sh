@@ -28,6 +28,16 @@ trap 'chmod -R u+w "$work"; rm -rf "$work"' EXIT
 
 stub_dir="$work/stubs"
 mkdir -p "$stub_dir"
+export TEST_REAL_CP
+TEST_REAL_CP=$(command -v cp)
+
+cat >"$stub_dir/cp" <<'STUB'
+#!/bin/bash
+if [[ -n ${COPY_FAIL_DEST:-} && ${!#} == "$COPY_FAIL_DEST" ]]; then
+  exit 1
+fi
+exec "$TEST_REAL_CP" "$@"
+STUB
 
 cat >"$stub_dir/udevadm" <<'STUB'
 #!/bin/bash
@@ -227,8 +237,7 @@ pass "mount failure falls back to the wizard"
 new_sandbox
 attach_drive cidata
 write_required_pair
-chmod 555 "$sandbox/root"
-! run_load 2>/dev/null || fail "copy failure exits non-zero"
+! COPY_FAIL_DEST="$sandbox/root/" run_load 2>/dev/null || fail "copy failure exits non-zero"
 grep -q '^umount ' "$TEST_LOG" || fail "copy failure still unmounts"
 pass "copy failure falls back and unmounts"
 

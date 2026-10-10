@@ -14,8 +14,11 @@ ISO="$MONARCH_INTEGRATION_ISO"
 SSH_PORT="${MONARCH_INTEGRATION_SSH_PORT:-2322}"
 MEMORY="${MONARCH_INTEGRATION_MEMORY:-8192}"
 INSTALL_TIMEOUT="${MONARCH_INTEGRATION_INSTALL_TIMEOUT:-2400}"
+DISK_CACHE="${MONARCH_INTEGRATION_DISK_CACHE:-}"
 NO_PREVIEW="${MONARCH_INTEGRATION_NO_PREVIEW:-false}"
-BOOT_TIMEOUT=600
+BOOT_TIMEOUT="${MONARCH_INTEGRATION_BOOT_TIMEOUT:-600}"
+CPUS="${MONARCH_INTEGRATION_CPUS:-$(nproc)}"
+ACCEL="${MONARCH_INTEGRATION_ACCEL:-kvm}"
 
 GUEST_USER="monarch"
 GUEST_PASSWORD="monarch"
@@ -93,14 +96,14 @@ capture_console() {
   sleep 1
   screendump "$shot"
   [[ -s $shot ]] || return 0
-  magick "$shot" "$RUN_DIR/$name.png" 2>/dev/null || true
+  timeout --kill-after=5s 15s magick "$shot" "$RUN_DIR/$name.png" 2>/dev/null || true
   rm -f "$shot"
 }
 
 stop_vm() {
   vm_running || return 0
 
-  if ! ssh_guest "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1; then
+  if ! MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest "echo $GUEST_PASSWORD | sudo -S systemctl poweroff" >/dev/null 2>&1; then
     qmp '"system_powerdown"' >/dev/null
   fi
 
@@ -166,23 +169,29 @@ cleanup() {
   return $status
 }
 trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 start_vm() {
   local disk="$1" serial="$2"
   shift 2
 
+  local cpu=host network="user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+  [[ $ACCEL == "tcg" ]] && cpu=max
+  [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && network+=",restrict=on"
+
   qemu-system-x86_64 \
-    -cpu host -enable-kvm -machine q35,accel=kvm \
-    -smp "$(nproc)" \
+    -cpu "$cpu" -machine "q35,accel=$ACCEL" \
+    -smp "$CPUS" \
     -m "$MEMORY" \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$ACTIVE_OVMF" \
-    -drive file="$disk",format=qcow2,if=none,id=drive0 \
+    -drive file="$disk",format=qcow2,if=none,id=drive0${DISK_CACHE:+,cache=$DISK_CACHE} \
     -device virtio-blk-pci,drive=drive0,bootindex=1 \
     -device virtio-vga \
     -display none \
     -usb -device usb-tablet \
-    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22 \
+    -netdev "$network" \
     -device virtio-net-pci,netdev=net0 \
     -qmp "unix:$QMP_SOCK,server,nowait" \
     -serial "file:$serial" \
@@ -206,10 +215,11 @@ start_vm_from_base() {
 ocr_screen() {
   local shot="$RUN_DIR/.screen.ppm" prepped="$RUN_DIR/.screen.png"
 
+  rm -f "$shot" "$prepped"
   screendump "$shot"
   [[ -s $shot ]] || return 0
-  magick "$shot" -colorspace gray -negate -resize 150% "$prepped" 2>/dev/null || return 0
-  tesseract "$prepped" - --psm 6 2>/dev/null || true
+  timeout --kill-after=5s 15s magick "$shot" -colorspace gray -negate -resize 150% "$prepped" 2>/dev/null || return 0
+  timeout --kill-after=5s 15s tesseract "$prepped" - --psm 6 2>/dev/null || true
 }
 
 wait_for_screen() {
@@ -279,7 +289,8 @@ type_text() {
 # --------------------------------------------------------------------- guest
 
 ssh_guest() {
-  ssh -i "$SSH_KEY" -p "$SSH_PORT" \
+  timeout --kill-after=5s "${MONARCH_INTEGRATION_SSH_DEADLINE:-0}s" \
+    ssh -F /dev/null -i "$SSH_KEY" -p "$SSH_PORT" \
     -o BatchMode=yes \
     -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=no \
@@ -294,22 +305,30 @@ ssh_sudo() {
 }
 
 wait_for_ssh() {
-  local timeout="$1" failure_name="${2:-failure-ssh-timeout}" waited=0
+  local timeout="$1" failure_name="${2:-failure-ssh-timeout}"
+  local started=$SECONDS next_note=30 progress_name
 
-  while ! ssh_guest true 2>/dev/null; do
+  while ! MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; do
     if ! vm_running; then
       echo "VM exited while waiting for SSH" >&2
       return 1
     fi
 
-    if ((waited >= timeout)); then
+    if ((SECONDS - started >= timeout)); then
       capture_console "$failure_name"
+      ocr_screen | tee "$RUN_DIR/console.log"
       echo "Timed out after ${timeout}s waiting for SSH" >&2
       return 1
     fi
 
-    sleep 5
-    ((waited += 5))
+    if ((SECONDS - started >= next_note)); then
+      printf -v progress_name 'waiting-ssh-%04ds' "$((SECONDS - started))"
+      capture_console "$progress_name"
+      echo "    ... waiting for SSH ($((SECONDS - started))s)"
+      ((next_note += 30))
+    fi
+
+    sleep 2
   done
 }
 
@@ -374,152 +393,18 @@ EOF
   press ctrl-alt-f1
 }
 
-# ---------------------------------------------------------- cidata autoinstall
-
-# The configurator's own output files, synthesized for the 40G virtio disk the
-# VM boots from. Sizing mirrors the configurator: 1MiB gap, 2GiB ESP, the rest
-# btrfs minus the GPT backup reserve.
 build_cidata() {
-  local dir="$BASE_DIR/cidata" hash
-  local disk_bytes=$((40 * 1024 * 1024 * 1024))
-  local mib=$((1024 * 1024)) gib=$((1024 * 1024 * 1024))
-  local boot_start=$mib boot_size=$((2 * gib))
-  local main_start=$((boot_size + boot_start))
-  local main_size=$((disk_bytes - main_start - mib))
-
-  rm -rf "$dir"
-  mkdir -p "$dir"
-
-  hash=$(openssl passwd -6 "$GUEST_PASSWORD")
-
-  cat >"$dir/user_credentials.json" <<EOF
-{
-    "root_enc_password": $(jq -Rn --arg v "$hash" '$v'),
-    "users": [
-        {
-            "enc_password": $(jq -Rn --arg v "$hash" '$v'),
-            "groups": [],
-            "sudo": true,
-            "username": "$GUEST_USER"
-        }
-    ]
-}
-EOF
-
-  cat >"$dir/user_configuration.json" <<EOF
-{
-    "app_config": null,
-    "archinstall-language": "English",
-    "auth_config": {},
-    "audio_config": { "audio": "pipewire" },
-    "bootloader_config": { "bootloader": "Limine", "uki": false, "removable": false },
-    "custom_commands": [],
-    "monarch_install": {
-        "schema_version": 1,
-        "mode": "full_disk",
-        "defer_provisioning": false,
-        "target_mount": "/mnt",
-        "boot": {
-            "esp_mount": "/boot",
-            "esp_path": "/EFI/limine",
-            "efi_binary": "limine_x64.efi",
-            "enable_fallback": true
-        },
-        "storage": { "kernel": "linux-cachyos" }
-    },
-    "disk_config": {
-        "config_type": "default_layout",
-        "device_modifications": [
-            {
-                "device": "/dev/vda",
-                "partitions": [
-                    {
-                        "btrfs": [],
-                        "dev_path": null,
-                        "flags": [ "boot", "esp" ],
-                        "fs_type": "fat32",
-                        "mount_options": [],
-                        "mountpoint": "/boot",
-                        "obj_id": "ea21d3f2-82bb-49cc-ab5d-6f81ae94e18d",
-                        "size": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $boot_size },
-                        "start": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $boot_start },
-                        "status": "create",
-                        "type": "primary"
-                    },
-                    {
-                        "btrfs": [
-                            { "mountpoint": "/", "name": "@" },
-                            { "mountpoint": "/home", "name": "@home" },
-                            { "mountpoint": "/var/log", "name": "@log" },
-                            { "mountpoint": "/var/cache/pacman/pkg", "name": "@pkg" }
-                        ],
-                        "dev_path": null,
-                        "flags": [],
-                        "fs_type": "btrfs",
-                        "mount_options": [ "compress=zstd" ],
-                        "mountpoint": null,
-                        "obj_id": "8c2c2b92-1070-455d-b76a-56263bab24aa",
-                        "size": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $main_size },
-                        "start": { "sector_size": { "unit": "B", "value": 512 }, "unit": "B", "value": $main_start },
-                        "status": "create",
-                        "type": "primary"
-                    }
-                ],
-                "wipe": true
-            }
-        ]
-    },
-    "hostname": "$GUEST_HOSTNAME",
-    "kernels": [ "linux-cachyos" ],
-    "network_config": { "type": "nm" },
-    "ntp": true,
-    "parallel_downloads": 8,
-    "script": null,
-    "services": [],
-    "swap": true,
-    "timezone": "UTC",
-    "locale_config": { "kb_layout": "us", "sys_enc": "UTF-8", "sys_lang": "en_US.UTF-8" },
-    "mirror_config": {
-        "custom_repositories": [],
-        "custom_servers": [
-            {"url": "https://mirror.cachyos.org/repo/\$arch/\$repo"},
-            {"url": "https://cdn.cachyos.org/repo/\$arch/\$repo"}
-        ],
-        "mirror_regions": {},
-        "optional_repositories": []
-    },
-    "packages": [
-        "base-devel",
-        "git",
-        "archlinux-keyring",
-        "cachyos-keyring",
-        "monarch-keyring",
-        "$RUNTIME_PACKAGE"
-    ],
-    "profile_config": { "gfx_driver": null, "greeter": null, "profile": {} },
-    "version": "3.0.9"
-}
-EOF
-
-  echo "Monarch Test" >"$dir/user_full_name.txt"
-  echo "test@monarch.org" >"$dir/user_email_address.txt"
-  cp "$SSH_KEY.pub" "$dir/authorized_keys"
-
-  rm -f "$CIDATA_IMG"
-  truncate -s 4M "$CIDATA_IMG"
-  mkfs.vfat -n CIDATA "$CIDATA_IMG" >/dev/null
-  mcopy -i "$CIDATA_IMG" "$dir"/* ::/
-}
-
-detect_packages() {
-  RUNTIME_PACKAGE=monarch
+  "$ROOT/bin/monarch-iso-cidata" \
+    --user "$GUEST_USER" --password "$GUEST_PASSWORD" --key "$SSH_KEY.pub" \
+    --disk /dev/vda --size 40G --hostname "$GUEST_HOSTNAME" \
+    --timezone UTC --keyboard us --full-name "Monarch Test" \
+    --email test@monarch.org --output "$CIDATA_IMG"
 }
 
 install_phase() {
   log "Installing $(basename "$ISO") unattended via cidata (headless)"
 
   [[ -f $SSH_KEY ]] || ssh-keygen -t ed25519 -N "" -q -C "monarch-integration" -f "$SSH_KEY"
-  detect_packages
   build_cidata
 
   # Build under a staging name: the finished base is promoted only after a
@@ -536,11 +421,12 @@ install_phase() {
     -device usb-storage,drive=cidata
 
   log "Waiting for the unattended install to finish (timeout ${INSTALL_TIMEOUT}s)"
-  local waited=0 text progress_name
+  local waited=0 text progress_name started=$SECONDS next_progress=0 next_note=0
   while true; do
+    waited=$((SECONDS - started))
     # An unattended install reboots on its own; SSH answering means the
     # installed system is up (cidata's authorized_keys enables sshd).
-    if ssh_guest true 2>/dev/null; then
+    if MONARCH_INTEGRATION_SSH_DEADLINE=15 ssh_guest true 2>/dev/null; then
       log "Install finished and rebooted into the installed system."
       capture_console "success-install-first-boot"
       break
@@ -556,6 +442,7 @@ install_phase() {
 
     if grep -qi "installation stopped" <<<"$text"; then
       capture_console "failure-install-stopped"
+      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
       echo "Install failed — screenshot saved to $RUN_DIR" >&2
       return 1
     fi
@@ -567,19 +454,30 @@ install_phase() {
 
     if ((waited >= INSTALL_TIMEOUT)); then
       capture_console "failure-install-timeout"
+      printf '%s\n' "$text" | tee "$RUN_DIR/console.log"
       echo "Timed out after ${INSTALL_TIMEOUT}s waiting for install" >&2
       return 1
     fi
 
-    if ((waited % 120 == 0)); then
+    if ((waited >= next_progress)); then
+      next_progress=$((waited + 120))
       printf -v progress_name 'success-install-progress-%04ds' "$waited"
       capture_console "$progress_name"
+    fi
+    if ((waited >= next_note)); then
+      next_note=$((waited + 30))
       echo "    ... installing (${waited}s)"
     fi
 
     sleep 10
-    ((waited += 10))
   done
+
+  MONARCH_INTEGRATION_SSH_DEADLINE=30 ssh_sudo "cat /var/log/monarch-install-timing.json" \
+    >"$BASE_DIR/monarch-install-timing.json" 2>/dev/null || true
+  MONARCH_INTEGRATION_SSH_DEADLINE=30 ssh_sudo "cat /var/log/monarch-install.log" \
+    >"$BASE_DIR/monarch-install.log" 2>/dev/null || true
+  MONARCH_INTEGRATION_SSH_DEADLINE=150 ssh_guest "timeout 120 systemctl is-system-running --wait >/dev/null; systemd-analyze" \
+    >"$BASE_DIR/first-boot-systemd-analyze.txt" 2>/dev/null || true
 
   log "Installed system is up. Saving base image."
   stop_vm
