@@ -11,9 +11,19 @@ archinstall's import-time CLI parsing from seeing Monarch-specific flags.
 from __future__ import annotations
 
 import sys
+from .command import capture
 from .context import InstallContext
 from .phases import PhaseError, run
 from .ui import error, info
+
+
+def verify_install_medium(ctx: InstallContext) -> None:
+    result = capture(["monarch-wait-mirror-verify"])
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "Install medium verification failed")
+    ctx.state["media_verified"] = True
+    if result.stdout.strip():
+        info(result.stdout.strip())
 
 
 def build_phases(ctx: InstallContext):
@@ -46,6 +56,7 @@ def build_phases(ctx: InstallContext):
     )
 
     return [
+        ("Verifying install medium",   verify_install_medium),
         ("Preparing live environment", prepare_live),
         ("Preparing install target",   prepare_install_target),
         ("Installing CachyOS + Monarch",  arch_install_system),
@@ -101,8 +112,9 @@ def main() -> int:
         return 0
     finally:
         restore_cpu_governors(governors)
-        cleanup_bind_mounts(ctx)
-        cleanup_target_hook_masks(ctx)
+        if ctx.state.get("media_verified"):
+            cleanup_bind_mounts(ctx)
+            cleanup_target_hook_masks(ctx)
         if not success:
             cleanup_protected_state(ctx)
 

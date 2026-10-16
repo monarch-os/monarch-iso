@@ -81,6 +81,13 @@ The ISO contains two offline caches:
 - `/var/cache/python/offline/` contains the Python packages required by the
   Monarch installer.
 
+At boot, the ISO checks SHA-256 hashes of the pacman mirror's packages and
+repository databases. Installation waits for that check before partitioning or
+formatting, including free-space installs. Missing or damaged files stop the
+install with a diagnostic; a slow or unreadable medium is bounded by a
+size-based timeout. This integrity check does not replace the ISO signature
+and does not include the separate Python cache.
+
 ### Build options
 
 | Option | Effect |

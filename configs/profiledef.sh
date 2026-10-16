@@ -87,4 +87,5 @@ file_permissions=(
   ["/usr/local/bin/monarch-iso-cleanup-disk"]="0:0:755"
   ["/usr/local/bin/monarch-install-dashboard"]="0:0:755"
   ["/usr/local/bin/monarch-install-diagnose-media"]="0:0:755"
+  ["/usr/local/bin/monarch-wait-mirror-verify"]="0:0:755"
 )
