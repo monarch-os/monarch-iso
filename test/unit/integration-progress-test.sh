@@ -9,6 +9,9 @@ trap 'rm -rf "$tmp"' EXIT
 (
   export MONARCH_INTEGRATION_ISO="$tmp/progress-candidate.iso"
   source "$root/test/integration.d/base-test.sh"
+  # Unsetting SECONDS disables Bash's live clock so only the mocks advance it.
+  unset SECONDS
+  SECONDS=0
   trap - EXIT
   rmdir "$RUN_DIR" "$BASE_DIR/runs" "$BASE_DIR" 2>/dev/null || true
   BASE_DIR="$tmp/base"
@@ -22,7 +25,10 @@ trap 'rm -rf "$tmp"' EXIT
 
   build_cidata() { :; }
   qemu-img() { :; }
-  start_vm() { touch "$1"; }
+  start_vm() {
+    touch "$1"
+    SECONDS=$((SECONDS + 7))
+  }
   stop_vm() {
     [[ -s $BASE_DIR/monarch-install-timing.json && -s $BASE_DIR/monarch-install.log && -s $BASE_DIR/first-boot-systemd-analyze.txt ]] || {
       echo 'not ok - install and first-boot diagnostics must be saved before shutdown' >&2
@@ -52,13 +58,14 @@ trap 'rm -rf "$tmp"' EXIT
   sleep() {
     sleeps=$((sleeps + 1))
     case "$sleeps" in
-      1) SECONDS=119 ;;
-      2) SECONDS=121 ;;
-      *) SECONDS=122 ;;
+      1) SECONDS=$((SECONDS + 119)) ;;
+      2) SECONDS=$((SECONDS + 2)) ;;
+      *) SECONDS=$((SECONDS + 1)) ;;
     esac
   }
   SECONDS=0
   install_phase >"$tmp/progress.log"
+  start_vm() { touch "$1"; }
   grep -qF 'Installation complete.' "$BASE_DIR/monarch-install.log"
   echo 'ok - install timings, log and first-boot timings survive a later boot failure'
 
