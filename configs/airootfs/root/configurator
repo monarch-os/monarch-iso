@@ -661,6 +661,7 @@ run_partition_execute() {
     say "[dry] partition numbers are assigned by parted at creation, then read back"
     say "[dry] encrypted=$encrypt_installation kernel=$kernel_choice"
   else
+    monarch-wait-mirror-verify || abort "Install medium verification failed"
     step "Creating partitions on $disk"
     if $needs_mklabel; then
       disk_step "initializing GPT on $disk" parted --script "$disk" mklabel gpt
@@ -810,6 +811,7 @@ open_partition_tool() {
   echo
   gum confirm --affirmative "Open cfdisk" --negative "Back" "Open partition tool for $disk?" || return 0
 
+  monarch-wait-mirror-verify || return 1
   clear
   cfdisk "$disk" || true
   partprobe "$disk" 2>/dev/null || true

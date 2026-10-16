@@ -232,6 +232,8 @@ printf '%s\n' "${required_package_files[@]}" |
 rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
 repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
+bash /builder/mirror-checksums.sh "$offline_mirror_dir" "$build_cache_dir/airootfs"
+
 # mkarchiso and the offline pacman config address the mirror at this path.
 # Link it before resolving the dashboard counts so those counts use the final
 # pruned repository, including locally-built Monarch packages and their exact

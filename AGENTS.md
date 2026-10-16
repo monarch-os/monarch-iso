@@ -50,6 +50,16 @@ The pruner refuses to delete anything if the selection is empty or if any select
 
 Ported from `omarchy-iso` `f66b6fc`, which lives on the `quattro` line, **not** on upstream `main`. Only the mechanism was taken: the surrounding code there assumes release channels (`pacman-online-${OMARCHY_MIRROR}.conf`) and locally-built packages (`LOCAL_OMARCHY_BUILD`), neither of which exists here. The upstream Python test was rewritten in bash to match the workspace convention.
 
+The final pacman mirror is checksummed after pruning and indexing by
+`builder/mirror-checksums.sh`. `monarch-mirror-verify.service` checks it at boot;
+`monarch-wait-mirror-verify` requires a successful verdict before the orchestrator
+prepares a full-disk target or the configurator creates free-space partitions.
+Missing metadata, failed hashes and timeouts stop installation. The timeout is
+sized at 2 MiB/s plus ten minutes. This detects damaged media, not authenticity;
+it does not cover the separate Python cache. Keep the two gates when changing
+installation ordering. `test/unit/mirror-verification-test.sh` and
+`test/unit/test_media_verification_gate.py` exercise the contract without a VM.
+
 # Autoinstall
 
 A drive labeled `cidata` (the cloud-init NoCloud label, so Proxmox, libvirt and

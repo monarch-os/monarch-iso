@@ -1,0 +1,15 @@
+[Unit]
+Description=Verify the offline package mirror before installation
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/var/cache/monarch/mirror/offline
+ExecStart=/usr/bin/sha256sum --check --strict --quiet /usr/share/monarch-iso/offline-mirror.sha256
+TimeoutStartSec=30min
+TimeoutStopSec=15s
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

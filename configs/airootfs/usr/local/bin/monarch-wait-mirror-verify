@@ -1,0 +1,101 @@
+#!/bin/bash
+
+MIRROR_UNIT=monarch-mirror-verify.service
+MIRROR_SUMS=/usr/share/monarch-iso/offline-mirror.sha256
+MIRROR_TIMEOUT=/usr/share/monarch-iso/offline-mirror.timeout
+
+verification_error() {
+  printf '%s\n' "$@" >&2
+  return 1
+}
+
+wait_for_mirror() {
+  local limit properties key value state result status loaded substate
+  local unanswered=0 inactive=0 started=$SECONDS last_report=-10
+
+  [[ -s $MIRROR_SUMS ]] || {
+    verification_error "Offline mirror checksums are missing; refusing to modify the disk."
+    return 1
+  }
+  limit=$(cat "$MIRROR_TIMEOUT" 2>/dev/null) || limit=""
+  [[ $limit =~ ^[0-9]{1,8}$ ]] && (( 10#$limit >= 600 )) || {
+    verification_error "Offline mirror timeout metadata is missing or invalid."
+    return 1
+  }
+  limit=$((10#$limit + 30))
+
+  timeout 10s systemctl start --no-block "$MIRROR_UNIT" || {
+    verification_error "Cannot start offline mirror verification; refusing to modify the disk."
+    return 1
+  }
+
+  while (( SECONDS - started <= limit )); do
+    if ! properties=$(timeout 10s systemctl show "$MIRROR_UNIT" \
+      -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus 2>/dev/null) || [[ -z $properties ]]; then
+      (( unanswered += 1 ))
+      if (( unanswered >= 5 )); then
+        verification_error "systemd is not answering; cannot verify the install medium."
+        return 1
+      fi
+      sleep 1
+      continue
+    fi
+    unanswered=0
+    state="" result="" status="" loaded="" substate=""
+    while IFS='=' read -r key value; do
+      case $key in
+        LoadState) loaded=$value ;;
+        ActiveState) state=$value ;;
+        SubState) substate=$value ;;
+        Result) result=$value ;;
+        ExecMainStatus) status=$value ;;
+      esac
+    done <<<"$properties"
+    [[ $loaded == "loaded" ]] || {
+      verification_error "$MIRROR_UNIT is not loaded; cannot verify the install medium."
+      return 1
+    }
+    case $state in
+      active)
+        if [[ $substate == "exited" && $result == "success" && $status == "0" ]]; then
+          echo "Offline package mirror verified."
+          return 0
+        fi
+        verification_error "$MIRROR_UNIT has no successful checksum verdict."
+        return 1
+        ;;
+      failed)
+        if [[ $result == "timeout" ]]; then
+          verification_error "Install medium is too slow: try another USB stick or port."
+        else
+          verification_error "Install medium verification failed: verify the ISO checksum and re-flash it."
+          timeout 10s journalctl -b -u "$MIRROR_UNIT" --no-pager -o cat -n 20 >&2 || true
+        fi
+        return 1
+        ;;
+      inactive)
+        (( inactive += 1 ))
+        if (( inactive >= 10 )); then
+          verification_error "$MIRROR_UNIT did not run; refusing to modify the disk."
+          return 1
+        fi
+        ;;
+      activating|deactivating) ;;
+      *)
+        verification_error "Unexpected verification state: ${state:-missing}."
+        return 1
+        ;;
+    esac
+    if (( SECONDS - started - last_report >= 10 )); then
+      echo "Verifying the install medium's packages..."
+      last_report=$((SECONDS - started))
+    fi
+    sleep 1
+  done
+  verification_error "Install medium verification timed out: try another USB stick or port."
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  set -uo pipefail
+  wait_for_mirror
+fi
