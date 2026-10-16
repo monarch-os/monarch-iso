@@ -197,6 +197,10 @@ def arch_install_system(ctx: InstallContext) -> None:
                 pacman_config=config.pacman_config,
             )
 
+            # DKMS must build against the target kernel, not the live ISO kernel.
+            installer.add_additional_packages([f"{kernel}-headers" for kernel in config.kernels])
+            _validate_kernel_headers(ctx)
+
             if not configure_keyboard(installer.target, kb_layout):
                 error(f"Invalid keyboard language specified: {kb_layout}")
 
@@ -344,13 +348,23 @@ def _install_limine_efi(
     source_name = "BOOTX64.EFI"
     target_dir = Path(esp_mount) / esp_path.lstrip("/")
     target_path = target_dir / efi_binary
-    _copy_required(limine_path / source_name, ctx.target / target_path.relative_to("/"))
+    destination = ctx.target / target_path.relative_to("/")
+    source = limine_path / source_name
+    esp_root = ctx.target / esp_mount.lstrip("/")
+    esp_guid = _mounted_partition_guid(esp_root)
+    if destination.exists() and destination.read_bytes() != source.read_bytes():
+        raise RuntimeError(f"Refusing to overwrite foreign EFI loader: {destination}")
+    _copy_required(source, destination)
+
+    fallback = esp_root / "EFI/BOOT/BOOTX64.EFI"
+    if _boot_intent(ctx)["enable_fallback"] and not fallback.exists():
+        _copy_required(source, fallback)
 
     hook_command = f"/usr/bin/cp /usr/share/limine/{source_name} {target_path}"
     _write_limine_pacman_hook(ctx.target, hook_command)
 
     loader = "\\" + str(Path(esp_path) / efi_binary).strip("/").replace("/", "\\")
-    _register_limine_efi_entry(disk, part, loader, ctx=ctx, pre_state=pre_state)
+    _register_limine_efi_entry(disk, part, loader, ctx=ctx, pre_state=pre_state, esp_guid=esp_guid)
 
 
 def _register_limine_efi_entry(
@@ -360,9 +374,10 @@ def _register_limine_efi_entry(
     *,
     ctx: InstallContext | None = None,
     pre_state: dict | None = None,
+    esp_guid: str,
 ) -> None:
     pre_state = pre_state or _read_efibootmgr()
-    subprocess.run(
+    created = subprocess.run(
         [
             "efibootmgr",
             "--create",
@@ -373,18 +388,25 @@ def _register_limine_efi_entry(
             "--unicode",
             "--verbose",
         ],
-        check=True,
+        check=False, stderr=subprocess.PIPE, text=True, errors="replace",
     )
+    if created.returncode:
+        error(f"Warning: Limine registration exited {created.returncode}: {created.stderr}. Checking whether firmware retained the entry.")
 
-    post_state = _read_efibootmgr()
+    try:
+        post_state = _read_efibootmgr()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        error(f"Warning: cannot read firmware entries after Limine registration: {exc}. Rollback ownership is unknown; boot routes will be checked before reboot.")
+        return
     new_entries = {
         num: label
         for num, label in post_state["entries"].items()
-        if num not in pre_state["entries"]
+        if num not in pre_state["entries"] and _limine_entry_matches(label, esp_guid, loader)
     }
     new_limine = _find_label_entries(new_entries, "Limine")
     if not new_limine:
-        raise RuntimeError("efibootmgr --create reported success but no new Limine entry found")
+        error("Warning: firmware did not retain this ESP's Limine entry. Boot routes will be checked before reboot.")
+        return
     limine_num = new_limine[0]
 
     if ctx is not None:
@@ -399,10 +421,12 @@ def _register_limine_efi_entry(
         if num != limine_num
         and num in pre_state["entries"]
     ]
-    subprocess.run(
+    ordered = subprocess.run(
         ["efibootmgr", "--bootorder", ",".join([limine_num, *keep])],
-        check=True, capture_output=True,
+        check=False, capture_output=True, text=True, errors="replace",
     )
+    if ordered.returncode:
+        error(f"Warning: firmware refused BootOrder: {ordered.stderr}. Select Limine in the firmware boot menu.")
 
 
 def _install_limine_bios(ctx: InstallContext, boot_partition) -> None:
@@ -479,6 +503,10 @@ def _write_limine_defaults(
     default_text = _limine_template(ctx, "default.conf").read_text()
     default_text = default_text.replace("@@CMDLINE@@", cmdline)
     default_text = re.sub(r'^ESP_PATH=.*$', f'ESP_PATH="{esp_mount}"', default_text, flags=re.MULTILINE)
+    fallback = ctx.target / esp_mount.lstrip("/") / "EFI/BOOT/BOOTX64.EFI"
+    source = ctx.target / "usr/share/limine/BOOTX64.EFI"
+    if fallback.exists() and (not source.is_file() or fallback.read_bytes() != source.read_bytes()):
+        enable_fallback = False
     if enable_fallback is not None:
         default_text = default_text.rstrip() + f"\nENABLE_LIMINE_FALLBACK={'yes' if enable_fallback else 'no'}\n"
     if not arch.has_uefi():
@@ -688,7 +716,7 @@ def _boot_intent(ctx: InstallContext) -> dict:
     boot.setdefault("esp_mount", "/boot")
     boot.setdefault("esp_path", "/EFI/limine")
     boot.setdefault("efi_binary", "limine_x64.efi")
-    boot.setdefault("enable_fallback", not ctx.is_protected)
+    boot.setdefault("enable_fallback", True)
     return boot
 
 
@@ -829,7 +857,7 @@ _BOOT_ORDER_RE = re.compile(r"^BootOrder:\s*(.*)$")
 
 
 def _read_efibootmgr() -> dict:
-    res = capture(["efibootmgr"], check=True)
+    res = capture(["efibootmgr", "--verbose"], check=True)
     entries: dict[str, str] = {}
     order: list[str] = []
     for line in res.stdout.splitlines():
@@ -845,6 +873,22 @@ def _read_efibootmgr() -> dict:
 
 def _find_label_entries(entries: dict[str, str], needle: str) -> list[str]:
     return [num for num, label in entries.items() if needle.lower() in label.lower()]
+
+
+def _mounted_partition_guid(mountpoint: Path) -> str:
+    source = capture_identifier(["findmnt", "-nro", "SOURCE", "--mountpoint", str(mountpoint)], "the ESP device")
+    guid = capture_identifier(["lsblk", "-ndo", "PARTUUID", source], "the ESP PARTUUID") if source else ""
+    if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", guid):
+        raise RuntimeError(f"Cannot identify the mounted ESP at {mountpoint}")
+    return guid.lower()
+
+
+def _limine_entry_matches(entry: str, guid: str, loader: str) -> bool:
+    return bool(
+        re.match(r"^Limine\s+", entry, re.IGNORECASE)
+        and re.search(rf"HD\(\d+,GPT,{re.escape(guid)},", entry, re.IGNORECASE)
+        and f"file({loader})".lower() in entry.lower()
+    )
 
 
 def _split_partition_device(part_dev: str) -> tuple[str, int]:
@@ -1247,6 +1291,11 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
     if not limine_conf.exists():
         raise RuntimeError(f"{limine_conf} missing")
 
+    fallback = esp_root / "EFI/BOOT/BOOTX64.EFI"
+    source = ctx.target / "usr/share/limine/BOOTX64.EFI"
+    if fallback.exists() and (not source.is_file() or fallback.read_bytes() != source.read_bytes()):
+        default_limine.write_text(default_text.rstrip() + "\nENABLE_LIMINE_FALLBACK=no\n")
+
     subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
 
     subprocess.run(
@@ -1584,6 +1633,7 @@ def _tailscale_authkey(path: Path) -> str:
 
 def validate_boot(ctx: InstallContext) -> None:
     _assert_boot_hooks_restored(ctx)
+    _validate_kernel_headers(ctx)
 
     boot = _boot_intent(ctx)
     storage = _storage_intent(ctx)
@@ -1613,11 +1663,11 @@ def validate_boot(ctx: InstallContext) -> None:
         if not limine_binary.exists() or limine_binary.stat().st_size == 0:
             raise RuntimeError(f"{limine_binary} missing or empty")
 
-        # Hardware packages (monarch-hw-intel-ptl, …) can swap the kernel out
-        # from under us mid-install, so trust what's on disk over what we asked
-        # for and only fall back to the configured name when nothing's there.
+        # A hardware replacement is allowed, but an unrelated UKI must not
+        # hide a failed build while the configured kernel is still installed.
         uki_dir = esp_mount / "EFI" / "Linux"
-        candidates = _installed_kernels(ctx) or [kernel]
+        installed = _installed_kernels(ctx)
+        candidates = [kernel] if kernel in installed else installed or [kernel]
         ukis = [uki_dir / f"{uki_prefix}_{name}.efi" for name in candidates]
         installed_ukis = [uki for uki in ukis if uki.exists() and uki.stat().st_size]
         if not installed_ukis:
@@ -1626,15 +1676,44 @@ def validate_boot(ctx: InstallContext) -> None:
             for uki in installed_ukis:
                 _validate_encrypted_uki(uki)
 
-        post = _read_efibootmgr()
-        if not _find_label_entries(post["entries"], "Limine"):
-            raise RuntimeError("no 'Limine' entry registered in efibootmgr")
+        _validate_uefi_boot_routes(ctx, esp_mount, limine_binary)
 
     if ctx.is_protected:
         _validate_pre_mounted_filesystems(ctx)
 
     if ctx.defer_provisioning:
         _validate_provisioning_state(ctx)
+
+
+def _validate_uefi_boot_routes(ctx: InstallContext, esp_mount: Path, binary: Path) -> None:
+    guid = _mounted_partition_guid(esp_mount)
+    loader = "\\" + str(binary.relative_to(esp_mount)).replace("/", "\\")
+    try:
+        entries = _read_efibootmgr()["entries"]
+    except subprocess.CalledProcessError:
+        entries = {}
+    has_entry = any(_limine_entry_matches(entry, guid, loader) for entry in entries.values())
+    fallback = esp_mount / "EFI/BOOT/BOOTX64.EFI"
+    source = ctx.target / "usr/share/limine/BOOTX64.EFI"
+    has_fallback = (fallback.is_file() and source.is_file() and source.stat().st_size > 0
+                    and fallback.read_bytes() == source.read_bytes())
+    if not has_entry and not has_fallback:
+        raise RuntimeError("no bootable route to this install: no matching Limine entry or valid EFI fallback")
+    if not has_entry:
+        error("Warning: using the EFI fallback; select the Monarch disk in the firmware boot menu if necessary.")
+
+
+def _validate_kernel_headers(ctx: InstallContext) -> None:
+    kernels = sorted((ctx.target / "usr/lib/modules").glob("*/pkgbase"))
+    if not kernels:
+        raise RuntimeError("no installed kernel found in target")
+    for pkgbase in kernels:
+        release = pkgbase.parent.name
+        headers = pkgbase.parent / "build/include/config/kernel.release"
+        if not headers.is_file():
+            raise RuntimeError(f"{pkgbase.read_text().strip()} ({release}) has no kernel headers")
+        if headers.read_text().strip() != release:
+            raise RuntimeError(f"{pkgbase.read_text().strip()} headers do not match kernel {release}")
 
 
 def _validate_encrypted_uki(uki: Path) -> None:

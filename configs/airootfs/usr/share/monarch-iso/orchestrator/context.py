@@ -211,7 +211,7 @@ def _default_monarch_install(user_configuration: dict) -> dict[str, Any]:
             "esp_mount": "/boot",
             "esp_path": "/EFI/limine",
             "efi_binary": "limine_x64.efi",
-            "enable_fallback": mode == "full_disk",
+            "enable_fallback": True,
         },
         "storage": {},
     }

@@ -229,7 +229,7 @@ write_protected_install_config() {
             "esp_mount": "$esp_mount_in_target",
             "esp_path": "/EFI/limine",
             "efi_binary": "limine_x64.efi",
-            "enable_fallback": false
+            "enable_fallback": true
         },
         "storage": {
             "disk": "$disk",
