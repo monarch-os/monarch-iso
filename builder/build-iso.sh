@@ -171,13 +171,22 @@ mapfile -t all_packages < <(
   } | sort -u
 )
 
-mapfile -t all_packages < <(printf '%s\n' "${all_packages[@]}" | grep -Fxv -e monarch -e monarch-settings)
+source /builder/local-package-dependencies.sh
+load_local_package_dependencies "$runtime_package" "$settings_package"
+mapfile -t all_packages < <(
+  for dependency in "${all_packages[@]}" "${local_depends[@]}"; do
+    if ! local_dependency_satisfied "$dependency"; then
+      printf '%s\n' "$dependency"
+    fi
+  done | sort -u
+)
 
 # Download all the packages to the offline mirror inside the ISO
 mkdir -p /tmp/offlinedb
 download_offline_packages() {
   pacman --config /configs/pacman-online.conf --noconfirm -Syw \
-    "${all_packages[@]}" --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
+    "${local_pacman_args[@]}" "${all_packages[@]}" \
+    --cachedir "$offline_mirror_dir/" --dbpath /tmp/offlinedb --needed
 }
 
 # A repository may occasionally republish a package without changing its
@@ -200,8 +209,10 @@ fi
 # -Syw above actually downloaded.
 if ! resolved_package_files="$(
   pacman --config /configs/pacman-online.conf --noconfirm \
-    --dbpath /tmp/offlinedb -S --print --print-format '%f' "${all_packages[@]}"
+    --dbpath /tmp/offlinedb -S --print --print-format '%f' \
+    "${local_pacman_args[@]}" "${all_packages[@]}"
 )"; then
+  printf '%s\n' "$resolved_package_files" >&2
   echo "ERROR: could not resolve the package files required by the offline mirror" >&2
   exit 1
 fi
@@ -249,6 +260,7 @@ resolve_expected_packages() {
     --root "$expected_packages_root" \
     --dbpath "$expected_packages_root/var/lib/pacman" \
     --noconfirm -S --print --print-format '%n' "$@"); then
+    printf '%s\n' "$resolved" >&2
     echo "ERROR: could not resolve expected target packages" >&2
     return 1
   fi
