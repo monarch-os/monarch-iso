@@ -107,7 +107,7 @@ class CommandCaptureTest(unittest.TestCase):
         post_state = {
             "entries": {
                 **pre_state["entries"],
-                "0003": "Limine\tHD(3,GPT,monarch)/File(\\EFI\\limine\\limine_x64.efi)",
+                "0003": "Limine\tHD(3,GPT,monarch,0x800,0x100)/File(\\EFI\\limine\\limine_x64.efi)",
             },
             "order": ["0003", "0002", "0001"],
         }
@@ -125,6 +125,7 @@ class CommandCaptureTest(unittest.TestCase):
                 Path("/dev/nvme0n1"), 3, "\\EFI\\limine\\limine_x64.efi",
                 ctx=ctx,
                 pre_state=pre_state,
+                esp_guid="monarch",
             )
 
         commands = [call.args[0] for call in run.call_args_list]
@@ -134,6 +135,59 @@ class CommandCaptureTest(unittest.TestCase):
             ctx.state["efi_boot_rollback"],
             {"created_entry": "0003", "previous_order": ["0002", "0001"]},
         )
+
+    def test_invalid_firmware_diagnostics_do_not_hide_created_entry_ownership(self):
+        directory = self.fake_bin()
+        guid = "12345678-1234-1234-1234-123456789abc"
+        loader = "\\EFI\\limine\\limine_x64.efi"
+        before = (
+            "BootOrder: 0002,0001\n"
+            f"Boot0001* Limine\tHD(1,GPT,foreign,0x800,0x100)/File({loader})\n"
+            "Boot0002* Windows Boot Manager\tHD(1,GPT,windows,0x800,0x100)\n"
+        )
+        (directory / "before").write_text(before)
+        (directory / "after").write_text(
+            before + f"Boot0003* Limine\tHD(3,GPT,{guid},0x800,0x100)/File({loader})\n"
+        )
+        (directory / "diagnostic").write_bytes(b"firmware refused\x80\xff\n")
+        for creates_entry in (False, True):
+            with self.subTest(creates_entry=creates_entry):
+                (directory / "created").unlink(missing_ok=True)
+                (directory / "calls").write_text("")
+                create_action = f'touch "{directory}/created"' if creates_entry else ":"
+                self.fake_script(
+                    "efibootmgr",
+                    f'echo "$*" >> "{directory}/calls"\n'
+                    'case "$1" in\n'
+                    f'  --create) {create_action}; cat "{directory}/diagnostic" >&2; exit 1 ;;\n'
+                    f'  --bootorder) cat "{directory}/diagnostic" >&2; cat "{directory}/diagnostic"; exit 1 ;;\n'
+                    '  --bootnum) exit 0 ;;\n'
+                    f'  *) if test -e "{directory}/created"; then cat "{directory}/after"; else cat "{directory}/before"; fi ;;\n'
+                    'esac',
+                )
+                ctx = types.SimpleNamespace(state={})
+                with mock.patch.object(phases_impl, "error") as warning:
+                    phases_impl._register_limine_efi_entry(
+                        Path("/dev/sda"), 3, loader, ctx=ctx, esp_guid=guid,
+                    )
+                warnings = "\n".join(call.args[0] for call in warning.call_args_list)
+                self.assertIn("firmware refused��", warnings)
+                if creates_entry:
+                    self.assertIn("refused BootOrder", warnings)
+                    self.assertEqual(ctx.state["efi_boot_rollback"], {
+                        "created_entry": "0003", "previous_order": ["0002", "0001"],
+                    })
+                    phases_impl._rollback_protected_efi_entry(ctx)
+                    calls = (directory / "calls").read_text().splitlines()
+                    self.assertIn("--bootorder 0003,0002,0001", calls)
+                    self.assertIn("--bootorder 0002,0001", calls)
+                    self.assertEqual(
+                        [call for call in calls if "--delete-bootnum" in call],
+                        ["--bootnum 0003 --delete-bootnum"],
+                    )
+                else:
+                    self.assertNotIn("efi_boot_rollback", ctx.state)
+                    self.assertNotIn("--bootorder", (directory / "calls").read_text())
 
     def test_a_mangled_identifier_stops_the_install_rather_than_reaching_fstab(self):
         # _validate_pre_mounted_filesystems reads the UUID back from this same
