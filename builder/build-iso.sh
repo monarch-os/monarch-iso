@@ -140,24 +140,9 @@ cp "/tmp/$NODE_FILENAME" "$build_cache_dir/airootfs/opt/packages/"
 arch_packages=(linux-cachyos git gum jq openssl plymouth tzupdate archlinux-keyring monarch-keyring cachyos-keyring)
 printf '%s\n' "${arch_packages[@]}" >>"$build_cache_dir/packages.x86_64"
 
-# The live ISO boots linux-cachyos, so releng's stock `linux` is a second kernel
-# nobody boots: ~17MB of kernel plus a ~250MB archiso initramfs, copied into both
-# the ISO tree and the size-constrained FAT EFI image.
-#
-# It cannot just be deleted — releng's broadcom-wl hard-depends on it, and it is
-# the only releng package that does, so pacman would drag the kernel straight back
-# in. broadcom-wl is a prebuilt module for stock linux and cannot load on the
-# kernel we boot, so it has done nothing since we started booting linux-cachyos.
-# The install is entirely offline and the live environment needs no Wi-Fi driver.
-#
-# cloud-init is also inherited from releng, but Monarch's cidata loader replaces
-# its only relevant job. Anchored so linux-cachyos and linux-firmware remain.
-# Upstream removes its unused stock kernel with the same mechanism.
-sed -i -E '/^(linux|broadcom-wl|cloud-init)$/d' "$build_cache_dir/packages.x86_64"
-
-# Its preset goes too: pacman's mkinitcpio hook runs `mkinitcpio -P` over every
-# preset in the airootfs, and this one's kernel never arrives to build from.
-rm "$build_cache_dir/airootfs/etc/mkinitcpio.d/linux.preset"
+# Monarch boots linux-cachyos and consumes cidata itself; neither releng's stock
+# kernel nor cloud-init should enter the live image.
+sed -i -E '/^(linux|cloud-init)$/d' "$build_cache_dir/packages.x86_64"
 
 # Build list of all packages needed for the live system and target transaction.
 mapfile -t all_packages < <(
