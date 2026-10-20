@@ -3,6 +3,8 @@
 ONLY this module imports from archinstall. Everything else uses these helpers.
 If archinstall's API churns, the blast radius is contained here.
 
+Targets archinstall 4.5 (Python 3.14).
+
 The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
 
     FilesystemHandler(disk_config).perform_filesystem_operations()
@@ -11,7 +13,7 @@ The canonical call sequence (mirrored from archinstall.scripts.guided.py) is:
         # configs do their own mounting before the Installer context opens.
         if disk_config.config_type != DiskLayoutType.Pre_mount:
             inst.mount_ordered_layout()
-        sanity_check(inst)
+        inst.sanity_check(skip_ntp=, skip_wkd=)
         inst.generate_key_files()                     # encrypted only
         inst.set_mirrors(handler, mirror_config, on_target=False)
         inst.minimal_installation(...)                # base + linux pacstrap
@@ -214,14 +216,6 @@ def _method_accepts(method, name: str) -> bool:
 
 def _method_accepts_users(method) -> bool:
     return _method_accepts(method, "users")
-
-
-def sanity_check(installer: Installer) -> None:
-    kwargs = {"skip_ntp": True, "skip_wkd": True}
-    # Archinstall 4.5 removed offline together with the reflector wait.
-    if _method_accepts(installer.sanity_check, "offline"):
-        kwargs["offline"] = True
-    installer.sanity_check(**kwargs)
 
 
 def install_applications(installer: Installer, arch_config: ArchConfig) -> None:

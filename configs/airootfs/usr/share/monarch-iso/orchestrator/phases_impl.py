@@ -167,7 +167,7 @@ def arch_install_system(ctx: InstallContext) -> None:
         if not pre_mounted:
             installer.mount_ordered_layout()
 
-        arch.sanity_check(installer)
+        installer.sanity_check(skip_ntp=True, skip_wkd=True)
 
         if not pre_mounted and arch.is_encrypted(config):
             installer.generate_key_files()
