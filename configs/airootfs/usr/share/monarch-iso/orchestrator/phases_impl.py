@@ -214,14 +214,6 @@ def arch_install_system(ctx: InstallContext) -> None:
             _install_early_packages(installer)
             _configure_limine_boot(ctx, installer, config)
 
-            info("› creating user (with /etc/skel populated)")
-            if config.auth_config and config.auth_config.users:
-                installer.create_users(config.auth_config.users)
-
-            if config.app_config:
-                info("› installing archinstall application selections")
-                arch.install_applications(installer, config)
-
             info("› installing Monarch runtime + monarch-base.packages")
             installer.add_additional_packages(_runtime_package_list(ctx))
 
@@ -232,6 +224,15 @@ def arch_install_system(ctx: InstallContext) -> None:
             if ctx.tailscale_authkey_path is not None:
                 info("› installing tailscale (auth key staged for first boot)")
                 installer.add_additional_packages(["tailscale"])
+
+            # Runtime packages also populate /etc/skel; PipeWire needs the account.
+            info("› creating user (with /etc/skel populated)")
+            if config.auth_config and config.auth_config.users:
+                installer.create_users(config.auth_config.users)
+
+            if config.app_config:
+                info("› installing archinstall application selections")
+                arch.install_applications(installer, config)
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
             _unmount_offline_package_cache(ctx)

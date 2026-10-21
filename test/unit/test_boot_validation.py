@@ -163,18 +163,25 @@ class BootValidationTest(unittest.TestCase):
             self.assertEqual(mounted_partition_guid(self.esp), GUID)
         self.assertIn("--mountpoint", capture.call_args_list[0].args[0])
 
-    def test_headers_are_installed_and_checked_before_runtime_packages(self):
+    def test_packages_precede_user_creation_and_user_application_setup(self):
+        for users in (["monarch"], []):
+            with self.subTest(users=users):
+                self.check_install_order(users)
+
+    def check_install_order(self, users):
         config = types.SimpleNamespace(
             kernels=["linux-cachyos"], mirror_config=None, locale_config=None,
-            hostname="monarch", pacman_config=None, swap=None, auth_config=None,
-            app_config=None, timezone=None, ntp=False,
+            hostname="monarch", pacman_config=None, swap=None,
+            auth_config=types.SimpleNamespace(users=users),
+            app_config=object(), timezone=None, ntp=False,
         )
         installer = mock.MagicMock(target=self.target)
         installer.__enter__.return_value = installer
         self.ctx.state.update(arch_config_handler=types.SimpleNamespace(config=config), mirror_handler=None)
-        self.ctx.tailscale_authkey_path = None
+        self.ctx.tailscale_authkey_path = self.target / "tailscale_authkey"
         events = []
         installer.add_additional_packages.side_effect = lambda packages: events.append(packages)
+        installer.create_users.side_effect = lambda accounts: events.append(("users", accounts))
         with ExitStack() as stack:
             for name, result in (("is_pre_mount", True), ("open_installer", installer), ("sanity_check", None), ("root_user", None)):
                 stack.enter_context(mock.patch.object(phases.arch, name, return_value=result, create=True))
@@ -184,8 +191,15 @@ class BootValidationTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(phases, "_runtime_package_list", return_value=["runtime-dkms"]))
             stack.enter_context(mock.patch.object(phases, "_validate_kernel_headers", side_effect=lambda ctx: events.append("validated")))
             stack.enter_context(mock.patch.object(phases, "_install_early_packages", side_effect=lambda installer: events.append("early")))
+            stack.enter_context(mock.patch.object(phases.arch, "install_applications", side_effect=lambda *args: events.append("applications"), create=True))
             phases.arch_install_system(self.ctx)
-        self.assertEqual(events, [["linux-cachyos-headers"], "validated", "early", ["runtime-dkms"]])
+        expected = [["linux-cachyos-headers"], "validated", "early", ["runtime-dkms"], ["tailscale"]]
+        if users:
+            expected.append(("users", users))
+            installer.create_users.assert_called_once_with(users)
+        else:
+            installer.create_users.assert_not_called()
+        self.assertEqual(events, expected + ["applications"])
 
     def test_finalizer_disables_foreign_fallback_updates(self):
         self.write("usr/bin/limine-update", "command")
