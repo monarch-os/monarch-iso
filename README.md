@@ -391,6 +391,7 @@ throwaway overlays:
 ```bash
 ./test/integration release/monarch.iso
 ./test/integration release/monarch.iso factory-reset --reuse-base
+./test/integration release/monarch.iso initramfs-rebuild --reuse-base --offline --no-preview
 ```
 
 The harness follows [Omarchy ISO's integration tests at `8b17699`](https://github.com/omacom/omarchy-iso/tree/8b17699997460b260e2320807602f50025cd3b4e/test).
@@ -416,6 +417,13 @@ scenario records SSH startup time and `systemd-analyze`, and rejects degraded
 startup or failed services. The separate `installed-system` scenario checks
 the btrfs root, hostname, runtime and desktop packages, command routes, SDDM
 service and EFI files, and saves the journal, package list and screenshots.
+The `initramfs-rebuild` scenario rebuilds the installed initramfs with
+`limine-mkinitcpio`, checks the default entry's UKI and BLAKE2b hash before and
+after the rebuild, and reboots through UEFI without answering the boot menu.
+It requires a new kernel boot ID and a running system, preserves the menu's
+entries and other OS groups, and saves the menus, rebuild log and boot journal.
+It runs only on a throwaway overlay; it does not seal images or remove machine
+IDs. Identical, reproducible UKIs are accepted if their on-disk hashes match.
 The installer log, `monarch-install-timing.json` and
 `first-boot-systemd-analyze.txt` are saved beside the base image before shutdown,
 so they remain available if a subsequent boot fails before SSH is reachable.
