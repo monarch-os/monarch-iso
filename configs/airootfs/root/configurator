@@ -23,7 +23,7 @@ if [[ ! -r $SETUP_FORM ]]; then
 fi
 source "$SETUP_FORM"
 
-# Partition creation helpers, shared with test/partition-numbering-test.sh so
+# Partition creation helpers, shared with test/unit/partition-numbering-test.sh so
 # the numbering logic can be exercised without a real disk.
 DISK_PARTITIONING="${DISK_PARTITIONING:-/usr/share/monarch-iso/disk-partitioning.sh}"
 [[ -r $DISK_PARTITIONING ]] ||
@@ -517,9 +517,9 @@ run_partition_decide() {
 
   # An unlabeled disk has no partition table for parted to scan, so we
   # synthesize a whole-disk free region and mklabel gpt before mkpart.
-  local FREE_SPACE_INFO pt_type disk_size_b
+  local FREE_SPACE_INFO pt_type disk_size_b free_space_table
   needs_mklabel=false
-  pt_type=$(lsblk -dno PTTYPE "$disk" 2>/dev/null)
+  pt_type=$(partition_table_type "$disk") || abort "Could not safely read the partition table on $disk. No changes made."
   if [[ -z "$pt_type" ]]; then
     disk_size_b=$(lsblk -bdno SIZE "$disk" 2>/dev/null)
     if [[ -n $disk_size_b ]] && (( disk_size_b > 0 )); then
@@ -532,7 +532,9 @@ run_partition_decide() {
   else
     # -s (script mode) keeps parted from prompting on stderr for warnings
     # like a stale GPT backup; without it the configurator hangs invisibly.
-    FREE_SPACE_INFO=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null | \
+    free_space_table=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null) ||
+      abort "Could not read free space on $disk. No changes made."
+    FREE_SPACE_INFO=$(printf '%s\n' "$free_space_table" | \
       awk -F: '
         $NF ~ /free/ {
           start=$2; end=$3; size=$4;
@@ -652,7 +654,7 @@ run_partition_decide() {
 # the pre-mounted (protected) install configuration. Runs after the user step
 # so LUKS can be formatted with the user's password.
 run_partition_execute() {
-  local dry=false subvol rollback_partitions_json="[]"
+  local dry=false subvol rollback_partitions_json="[]" pt_type
   [[ "${1:-}" == "dry" ]] && dry=true
 
   if $dry; then
@@ -664,6 +666,11 @@ run_partition_execute() {
     monarch-wait-mirror-verify || abort "Install medium verification failed"
     step "Creating partitions on $disk"
     if $needs_mklabel; then
+      # Planning and execution are separated by the owner form. A table that
+      # appeared in between must never be replaced using the old blank verdict.
+      pt_type=$(partition_table_type "$disk") ||
+        disk_abort_hook "Could not safely read the partition table on $disk"
+      [[ -z $pt_type ]] || disk_abort_hook "A partition table appeared on $disk; refusing to replace it"
       disk_step "initializing GPT on $disk" parted --script "$disk" mklabel gpt
       partprobe "$disk" 2>/dev/null || true
       sleep 1
@@ -822,14 +829,16 @@ open_partition_tool() {
 # If the disk has no partition table or no unallocated free space, the only
 # viable paths write the whole disk, so the free-space mode is not offered.
 requires_full_disk_install() {
-  local pt_type free_space_b
-  pt_type=$(lsblk -dno PTTYPE "$disk" 2>/dev/null)
+  local pt_type free_space_b free_space_table
+  pt_type=$(partition_table_type "$disk") || abort "Could not safely read the partition table on $disk. No changes made."
 
   # a) No partition table: disk is empty
   [[ -z "$pt_type" ]] && return 0
 
   # b) No usable free space
-  free_space_b=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null | \
+  free_space_table=$(parted -ms "$disk" unit B print free </dev/null 2>/dev/null) ||
+    abort "Could not read free space on $disk. No changes made."
+  free_space_b=$(printf '%s\n' "$free_space_table" | \
     awk -F: '
       $NF ~ /free/ {
         size=$4;
