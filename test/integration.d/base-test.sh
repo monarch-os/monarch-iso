@@ -177,6 +177,10 @@ start_vm() {
   shift 2
 
   local cpu=host network="user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22"
+  local -a graphics=(-device virtio-vga -display none)
+  if [[ -n ${MONARCH_INTEGRATION_RENDER_NODE:-} ]]; then
+    graphics=(-device virtio-vga-gl -display "egl-headless,rendernode=$MONARCH_INTEGRATION_RENDER_NODE")
+  fi
   [[ $ACCEL == "tcg" ]] && cpu=max
   [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && network+=",restrict=on"
 
@@ -188,8 +192,7 @@ start_vm() {
     -drive if=pflash,format=raw,file="$ACTIVE_OVMF" \
     -drive file="$disk",format=qcow2,if=none,id=drive0${DISK_CACHE:+,cache=$DISK_CACHE} \
     -device virtio-blk-pci,drive=drive0,bootindex=1 \
-    -device virtio-vga \
-    -display none \
+    "${graphics[@]}" \
     -usb -device usb-tablet \
     -netdev "$network" \
     -device virtio-net-pci,netdev=net0 \

@@ -8,7 +8,7 @@
 # Usage: test/integration [release/monarch.iso] [scenario ...] [options]
 #
 #   scenario       Basename of a test/integration.d/<scenario>-test.sh file;
-#                  all scenarios run when none are named
+#                  default scenarios run when none are named (opt-in ones excluded)
 #   --reuse-base   Skip the install if a saved base image exists
 #   --port PORT    Host port forwarded to guest SSH (default 2322)
 #   --memory MB    VM memory (default 8192)
@@ -63,7 +63,10 @@ if [[ ! -f ${ISO:-} ]]; then
 fi
 
 if (( ${#SCENARIOS[@]} == 0 )); then
-  SCENARIOS=("$ROOT"/test/integration.d/*-test.sh)
+  for scenario in "$ROOT"/test/integration.d/*-test.sh; do
+    grep -qx '# integration:opt-in' "$scenario" && continue
+    SCENARIOS+=("$scenario")
+  done
 else
   for scenario in "${SCENARIOS[@]}"; do
     if [[ $(basename "$scenario") == "base-test.sh" || ! -f $scenario ]]; then
