@@ -19,6 +19,7 @@ trap 'rm -rf "$tmp"' EXIT
   printf 'ssh-ed25519 test-key integration\n' >"$SSH_KEY.pub"
 
   qemu-system-x86_64() { printf '%s\n' "$@" >"$tmp/qemu-args"; }
+  unset MONARCH_INTEGRATION_RENDER_NODE
   export MONARCH_INTEGRATION_OFFLINE=true
   ACCEL=tcg
   CPUS=2
@@ -35,6 +36,15 @@ trap 'rm -rf "$tmp"' EXIT
   grep -qxF host "$tmp/qemu-args"
   ! grep -q restrict=on "$tmp/qemu-args"
   echo "ok - normal integration runs retain KVM and network access"
+
+  grep -qxF virtio-vga "$tmp/qemu-args"
+  grep -qxF none "$tmp/qemu-args"
+  export MONARCH_INTEGRATION_RENDER_NODE=/dev/dri/render-test
+  start_vm "$tmp/disk.qcow2" "$tmp/serial.log"
+  grep -qxF virtio-vga-gl "$tmp/qemu-args"
+  grep -qxF egl-headless,rendernode=/dev/dri/render-test "$tmp/qemu-args"
+  unset MONARCH_INTEGRATION_RENDER_NODE
+  echo "ok - EGL graphics are opt-in and keep the selected render node"
 
   DISK_CACHE=none
   start_vm "$tmp/disk.qcow2" "$tmp/serial.log"
