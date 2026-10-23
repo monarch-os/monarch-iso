@@ -385,6 +385,15 @@ Run all fast, VM-free tests after changing the installer:
 ./test/all
 ```
 
+The partition safety suites (`test/unit/partition-numbering-test.sh`,
+`partition-safety-test.sh` and `partition-table-type-test.sh`) use disposable
+image files and simulated probe failures, never host disks or loop devices.
+They require `parted` and util-linux (`blkid`/`lsblk`). They cover failed or
+malformed table reads, stale udev/RAID detection, ambiguous partition-number
+deltas, and rollback ownership. An uncertain probe stops the wizard rather than
+classifying the disk as blank; the free-space path rechecks a planned blank
+disk immediately before initializing GPT.
+
 Run an unattended installation once and execute every integration scenario on
 throwaway overlays:
 
