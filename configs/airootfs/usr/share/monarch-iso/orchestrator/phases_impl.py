@@ -576,7 +576,7 @@ TARGET_DEFERRED_BOOT_HOOKS = ("90-mkinitcpio-install.hook",)
 def _drop_archinstall_zram_conf(ctx: InstallContext) -> None:
     """Remove the zram-generator.conf archinstall's setup_swap writes directly.
 
-    monarch-settings ships the tuning as a vendor drop-in at
+    monarch ships the tuning as a vendor drop-in at
     /usr/lib/systemd/zram-generator.conf.d/90-monarch.conf, which outranks the
     main config file. setup_swap's generic /etc copy decides nothing and only
     implies /etc is where zram gets configured, so drop it — we still want the

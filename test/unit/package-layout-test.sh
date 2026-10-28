@@ -6,12 +6,14 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 monarch_root=${MONARCH_SOURCE_PATH:-$root/../monarch}
 monarch_pkgs_root=${MONARCH_PKGS_SOURCE_PATH:-$root/../monarch-pkgs}
 runtime_pkgbuild="$monarch_pkgs_root/pkgbuilds/monarch/PKGBUILD"
-settings_pkgbuild="$monarch_pkgs_root/pkgbuilds/monarch-settings/PKGBUILD"
 
 [[ -f $runtime_pkgbuild ]]
-[[ -f $settings_pkgbuild ]]
-
-grep -qF "'monarch-settings'" "$runtime_pkgbuild"
+[[ ! -f $monarch_pkgs_root/pkgbuilds/monarch-settings/PKGBUILD ]]
+(
+  source "$runtime_pkgbuild"
+  [[ " ${depends[*]} " != *" monarch-settings "* ]]
+  [[ ${pkgname[0]} == "monarch" ]]
+)
 
 noctalia_package=$(sed -n '/^noctalia/p' "$monarch_root/install/monarch-base.packages")
 [[ -n $noctalia_package ]]
@@ -21,11 +23,10 @@ grep -qF "'$noctalia_package'" "$runtime_pkgbuild" || {
 }
 
 grep -qF 'cp -a "$MONARCH_SRC/." "$srcdir/monarch/"' "$runtime_pkgbuild"
-grep -qF 'cp -a "$MONARCH_SRC/." "$srcdir/monarch/"' "$settings_pkgbuild"
-grep -qF 'config/. "$pkgdir/etc/skel/.config/"' "$settings_pkgbuild"
-grep -qF 'config/. "$pkgdir/usr/share/monarch/config/"' "$settings_pkgbuild"
-grep -qF 'default/systemd/user/monarch-crash-watch.service' "$settings_pkgbuild"
-if grep -qF -- '--no-preserve=ownership' "$runtime_pkgbuild" "$settings_pkgbuild"; then
+grep -qF 'config/. "$pkgdir/etc/skel/.config/"' "$runtime_pkgbuild"
+grep -qF 'config/. "$pkgdir/usr/share/monarch/config/"' "$runtime_pkgbuild"
+grep -qF 'default/systemd/user/monarch-crash-watch.service' "$runtime_pkgbuild"
+if grep -qF -- '--no-preserve=ownership' "$runtime_pkgbuild"; then
   echo "package recipes must preserve the reference local-source workflow" >&2
   exit 1
 fi
@@ -39,7 +40,9 @@ if grep -qE "^(provides|conflicts|replaces)=\('monarch-dns'\)" "$runtime_pkgbuil
   exit 1
 fi
 
-grep -qF 'for package_name in monarch-settings monarch' "$root/builder/build-monarch-package.sh"
+grep -qF 'cp -a /monarch-pkgs/pkgbuilds/monarch "$work_dir/"' "$root/builder/build-monarch-package.sh"
+! grep -q 'settings_package' "$root/builder/build-iso.sh"
+! grep -qxF monarch-settings "$root/builder/target-bootstrap.packages"
 grep -qF 'resolve_expected_packages' "$root/builder/build-iso.sh"
 grep -qF 'pacman-offline.conf' "$root/builder/build-iso.sh"
 grep -qF 'cp /builder/target-bootstrap.packages "$build_cache_dir/airootfs/usr/share/monarch-iso/' \
@@ -90,4 +93,4 @@ if grep -qE 'install/(preflight|packaging)|helpers/all\.sh' "$monarch_root/insta
 fi
 grep -qF 'exec monarch-apply-system "$@"' "$monarch_root/install.sh"
 
-echo "ok - Monarch runtime and settings are built and counted as two packages"
+echo "ok - Monarch runtime and defaults are built and counted as one package"

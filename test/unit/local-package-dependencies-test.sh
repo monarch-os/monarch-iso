@@ -57,6 +57,10 @@ sed -n '/^source \/builder\/local-package-dependencies.sh/,/^mapfile -t required
   "$root/builder/build-iso.sh" |
   sed -e "s|/builder/|$root/builder/|g" -e "s|/tmp/offlinedb|$tmp/db|g" >"$tmp/transaction.sh"
 (
+  package monarch 2:3.0-3 'provides = monarch-settings=3.0' 'provides = local-api=4' \
+    'provides = unversioned-api' 'depend = external>=2' 'depend = external<4' \
+    'depend = unversioned-api>=1' 'depend = settings-only'
+  runtime_package="$tmp/packages/monarch-2:3.0-3-any.pkg.tar.zst"
   pacman() {
     printf '%s\n' "$@" >>"$tmp/calls"
     if [[ " $* " == *' --print '* ]]; then
@@ -85,7 +89,7 @@ sed -n '/^source \/builder\/local-package-dependencies.sh/,/^mapfile -t required
   grep -q 'pacman stderr detail' "$tmp/error"
   grep -q 'could not resolve the package files' "$tmp/error"
 )
-echo 'ok - build download and prune resolution share dependencies and providers; failures retain diagnostics'
+echo 'ok - unified package download and prune resolution share dependencies and providers; failures retain diagnostics'
 
 sed -n '/^resolve_expected_packages() {/,/^}/p' "$root/builder/build-iso.sh" >"$tmp/expected.sh"
 (

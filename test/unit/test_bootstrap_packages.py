@@ -27,7 +27,6 @@ class BootstrapPackagesTest(unittest.TestCase):
                     "limine",
                     "efibootmgr",
                     "monarch-keyring",
-                    "monarch-settings",
                     "monarch",
                 ],
             )

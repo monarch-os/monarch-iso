@@ -170,7 +170,7 @@ Source overrides: `MONARCH_INSTALLER_REPO` (a **full git URL**, unlike
 Omarchy's `owner/name`) and `MONARCH_INSTALLER_REF` (default `dev`) choose the
 runtime source; `MONARCH_PKGS_REPO` and `MONARCH_PKGS_REF` (default `main`)
 choose its package recipes. Normal builds clone both validated refs and build
-the `monarch`/`monarch-settings` pair. `--local-source` bind-mounts the two
+the unified `monarch` package. `--local-source` bind-mounts the two
 supplied checkouts instead.
 
 `dev` is the default because it is the only long-lived branch on `monarch-os/monarch` and its remote HEAD — there is no `main` or `master`. Check with `git ls-remote --heads` before assuming otherwise; a ref that does not exist fails the clone inside the container and aborts the build.
