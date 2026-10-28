@@ -52,11 +52,25 @@ CONF
   " >/dev/null
 
   ssh_sudo "cat /boot/limine.conf" >"$RUN_DIR/limine.conf.fixtured"
+  ssh_sudo '
+    set -euo pipefail
+    mkdir -p /run/monarch-test-top
+    mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" /run/monarch-test-top
+    factory=/run/monarch-test-top/@factory
+    btrfs property set -ts "$factory" ro false
+    install -d "$factory/etc/systemd/system/monarch-provision-owner.service.d"
+    cat >"$factory/etc/systemd/system/monarch-provision-owner.service.d/test-completion.conf" <<EOF
+[Service]
+ExecStartPost=/usr/bin/bash -c "test ! -e /var/lib/monarch/provisioning/pending && echo MONARCH_TEST_PROVISIONING_COMPLETE >/dev/ttyS0"
+EOF
+    btrfs property set -ts "$factory" ro true
+    umount /run/monarch-test-top
+  '
   log "ESP fixtured as a shared dual-boot ESP (old machine-id $OLD_ID)"
 }
 
 # A saved base image contains the runtime from the ISO that created it. During
-# runtime development, optionally replace only the reset entry point so this
+# runtime development, optionally replace the reset and first-boot entry points so this
 # scenario can validate the current source without rebuilding that base first.
 install_runtime_under_test() {
   local source=${MONARCH_INTEGRATION_MONARCH_SOURCE:-}
@@ -72,7 +86,9 @@ install_runtime_under_test() {
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     "$source/bin/monarch-system-factory-reset" \
-    "$GUEST_USER@127.0.0.1:/tmp/monarch-system-factory-reset"
+    "$source/bin/monarch-provision-owner" \
+    "$source/install/provisioning/setup-form.sh" \
+    "$GUEST_USER@127.0.0.1:/tmp/"
   scp -q -i "$SSH_KEY" -P "$SSH_PORT" \
     -o BatchMode=yes \
     -o IdentitiesOnly=yes \
@@ -81,6 +97,8 @@ install_runtime_under_test() {
     "$source/default/shells/init" \
     "$GUEST_USER@127.0.0.1:/tmp/monarch-shell-init"
   ssh_sudo "install -m 755 /tmp/monarch-system-factory-reset /usr/bin/monarch-system-factory-reset"
+  ssh_sudo "install -m 755 /tmp/monarch-provision-owner /usr/share/monarch/bin/monarch-provision-owner
+    install -m 644 /tmp/setup-form.sh /usr/share/monarch/install/provisioning/setup-form.sh"
   ssh_sudo '
     set -euo pipefail
     mountpoint -q /run/monarch-test-top || {
@@ -255,7 +273,7 @@ drive_first_boot() {
       step="email"; [[ -v answered[$step] ]] || { type_text "test@monarch.org"; capture_console "success-firstboot-02-form"; press ret; }
     elif grep -qi "Hostname" <<<"$text"; then
       step="hostname"; [[ -v answered[$step] ]] || { type_text "$GUEST_HOSTNAME"; press ret; }
-    elif grep -qi "Timezone" <<<"$text"; then
+    elif grep -qi '^Timezone$' <<<"$text"; then
       step="timezone"; [[ -v answered[$step] ]] || press ret
     fi
     [[ -n $step ]] && answered[$step]=1
@@ -279,9 +297,16 @@ drive_first_boot() {
 first_boot_phase() {
   drive_first_boot
 
-  # Finalization can still be running when the console appears; the pending
-  # flag clearing is the definitive end of provisioning. The reset scrubbed
-  # users, host keys, and sshd state, so SSH has to be re-authorized first.
+  # Provisioning's VT teardown can swallow getty input while we bootstrap SSH.
+  local started=$SECONDS
+  until grep -q MONARCH_TEST_PROVISIONING_COMPLETE "$RUN_DIR/serial.log"; do
+    if ! vm_running || ((SECONDS - started >= 900)); then
+      capture_console "failure-provisioning-completion"
+      echo "First-boot provisioning did not finish successfully" >&2
+      return 1
+    fi
+    sleep 3
+  done
   bootstrap_ssh
 
   log "Waiting for provisioning to finish"
@@ -317,7 +342,7 @@ first_boot_phase() {
   check "foreign boot directory survives the first boot" \
     ssh_sudo "grep -q foreign-payload /boot/$FOREIGN_ID/marker"
   check "foreign UKI survives the first boot" \
-    ssh_sudo "test -f /boot/EFI/Linux/foreign_linux.efi"
+    ssh_sudo "test -f /boot/EFI/Linux/foreign_linux-cachyos.efi"
   check "old monarch identity never returns" \
     ssh_sudo "! grep -q 'machine-id=$OLD_ID' /boot/limine.conf"
   check "the new identity owns a boot entry" \

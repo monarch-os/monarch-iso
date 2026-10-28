@@ -26,8 +26,8 @@ trap 'rm -rf "$tmp"' EXIT
   start_vm "$tmp/disk.qcow2" "$tmp/serial.log"
   grep -qxF 'q35,accel=tcg' "$tmp/qemu-args"
   grep -qxF max "$tmp/qemu-args"
-  grep -qxF "user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,restrict=on" "$tmp/qemu-args"
-  echo "ok - offline TCG boot retains only explicitly forwarded SSH"
+  grep -qxF "user,id=net0,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22,restrict=on,guestfwd=tcp:10.0.2.100:$HTTP_PORT-cmd:socat - TCP:127.0.0.1:$HTTP_PORT" "$tmp/qemu-args"
+  echo "ok - offline TCG boot retains only forwarded SSH and its host bootstrap endpoint"
 
   export MONARCH_INTEGRATION_OFFLINE=false
   ACCEL=kvm
@@ -35,6 +35,7 @@ trap 'rm -rf "$tmp"' EXIT
   grep -qxF 'q35,accel=kvm' "$tmp/qemu-args"
   grep -qxF host "$tmp/qemu-args"
   ! grep -q restrict=on "$tmp/qemu-args"
+  ! grep -q guestfwd= "$tmp/qemu-args"
   echo "ok - normal integration runs retain KVM and network access"
 
   grep -qxF virtio-vga "$tmp/qemu-args"
