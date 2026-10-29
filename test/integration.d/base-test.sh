@@ -182,7 +182,11 @@ start_vm() {
     graphics=(-device virtio-vga-gl -display "egl-headless,rendernode=$MONARCH_INTEGRATION_RENDER_NODE")
   fi
   [[ $ACCEL == "tcg" ]] && cpu=max
-  [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && network+=",restrict=on"
+  if [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]]; then
+    network+=",restrict=on"
+    # Only the host's SSH bootstrap endpoint stays reachable without Internet access.
+    network+=",guestfwd=tcp:10.0.2.100:$HTTP_PORT-cmd:socat - TCP:127.0.0.1:$HTTP_PORT"
+  fi
 
   qemu-system-x86_64 \
     -cpu "$cpu" -machine "q35,accel=$ACCEL" \
@@ -340,6 +344,8 @@ wait_for_ssh() {
 # script fetched from a throwaway host HTTP server.
 bootstrap_ssh() {
   log "Authorizing SSH access via console login"
+  local host=10.0.2.2
+  [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && host=10.0.2.100
 
   mkdir -p "$BASE_DIR/www"
   cat >"$BASE_DIR/www/bootstrap" <<EOF
@@ -385,7 +391,7 @@ EOF
   # owner account. Let it reach its prompt before injecting the command.
   sleep 15
 
-  type_text "curl -fsS http://10.0.2.2:$HTTP_PORT/bootstrap -o /tmp/bs && bash /tmp/bs"
+  type_text "curl -fsS http://$host:$HTTP_PORT/bootstrap -o /tmp/bs && bash /tmp/bs"
   press ret
 
   wait_for_ssh 360 "failure-bootstrap-ssh-timeout"

@@ -86,16 +86,14 @@ find_exact_package() {
 }
 
 runtime_package=$(find_exact_package "$offline_mirror_dir" monarch || true)
-settings_package=$(find_exact_package "$offline_mirror_dir" monarch-settings || true)
 [[ -n $runtime_package ]] || { echo "ERROR: Monarch runtime package not found" >&2; exit 1; }
-[[ -n $settings_package ]] || { echo "ERROR: Monarch settings package not found" >&2; exit 1; }
 bsdtar -xf "$runtime_package" -C "$runtime_root"
-bsdtar -xf "$settings_package" -C "$runtime_root"
 
 runtime_share="$runtime_root/usr/share/monarch"
 for required in install/monarch-base.packages install/monarch-other.packages \
   install/monarch-preinstalls.packages \
-  install/python.packages install/provisioning/setup-form.sh logo.txt; do
+  install/python.packages install/provisioning/setup-form.sh logo.txt \
+  default/plymouth/monarch.plymouth; do
   [[ -f $runtime_share/$required ]] || {
     echo "ERROR: monarch package does not ship /usr/share/monarch/$required" >&2
     exit 1
@@ -152,12 +150,12 @@ mapfile -t all_packages < <(
     grep -hv '^#\|^$' "$build_cache_dir/airootfs/usr/share/monarch-iso/monarch-other.packages"
     grep -hv '^#\|^$' /builder/archinstall.packages
     grep -hv '^#\|^$' /builder/target-bootstrap.packages
-    printf '%s\n' monarch monarch-settings
+    printf '%s\n' monarch
   } | sort -u
 )
 
 source /builder/local-package-dependencies.sh
-load_local_package_dependencies "$runtime_package" "$settings_package"
+load_local_package_dependencies "$runtime_package"
 mapfile -t all_packages < <(
   for dependency in "${all_packages[@]}" "${local_depends[@]}"; do
     if ! local_dependency_satisfied "$dependency"; then
@@ -204,7 +202,6 @@ fi
 
 mapfile -t required_package_files <<<"$resolved_package_files"
 required_package_files+=("${runtime_package##*/}")
-required_package_files+=("${settings_package##*/}")
 
 printf '%s\n' "${required_package_files[@]}" |
   bash /builder/prune-offline-mirror.sh "$offline_mirror_dir"

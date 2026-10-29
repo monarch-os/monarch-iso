@@ -14,7 +14,7 @@
 #   --memory MB    VM memory (default 8192)
 #   --timeout SECS Install timeout (default 2400)
 #   --no-preview   Do not open the collected screenshots in imv
-#   --offline      Block guest network access except forwarded SSH
+#   --offline      Block guest network access except test-host SSH and bootstrap
 #   --cpus N       Guest vCPU count (default: host CPU count)
 
 set -euo pipefail
