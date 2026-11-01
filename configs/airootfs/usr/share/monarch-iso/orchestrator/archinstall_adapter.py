@@ -35,6 +35,7 @@ from the start.
 from __future__ import annotations
 
 import importlib
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -53,6 +54,37 @@ from archinstall.lib.models.device import DiskLayoutType, EncryptionType
 from archinstall.lib.models.users import User
 
 from .ui import info
+
+
+def target_missing_packages(target: Path, names: list[str]) -> list[str]:
+    dbpath = target / 'var/lib/pacman'
+    if not names or not (dbpath / 'local').is_dir():
+        return list(names)
+    result = subprocess.run(['pacman', '-T', '--root', str(target), '--dbpath', str(dbpath), *names],
+                            capture_output=True, text=True)
+    if result.returncode not in (0, 127):
+        raise RuntimeError(f'Cannot read target package database: {result.stderr.strip()}')
+    missing = set(result.stdout.splitlines())
+    return [name for name in names if name in missing]
+
+
+@contextmanager
+def installed_package_delta(installer):
+    """Keep archinstall's configuration steps; only reduce its pacstrap transactions."""
+    original = installer.pacman.strap
+
+    def strap(packages, *args, **kwargs):
+        names = [packages] if isinstance(packages, str) else list(packages)
+        missing = target_missing_packages(installer.target, names)
+        if not missing:
+            return True
+        return original(missing, *args, **kwargs)
+
+    installer.pacman.strap = strap
+    try:
+        yield
+    finally:
+        installer.pacman.strap = original
 
 
 def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
@@ -139,7 +171,8 @@ def open_installer(
         kernels=arch_config.kernels,
         silent=silent,
     ) as installer:
-        yield installer
+        with installed_package_delta(installer):
+            yield installer
 
 
 def is_encrypted(arch_config: ArchConfig) -> bool:

@@ -12,17 +12,19 @@ printf 'settings payload\n' >"$mirror/settings-1-1-any.pkg.tar.xz"
 printf 'signature\n' >"$mirror/runtime-1-1-x86_64.pkg.tar.zst.sig"
 printf 'database\n' >"$mirror/offline.db.tar.gz"
 printf 'file list\n' >"$mirror/offline.files.tar.gz"
+printf 'root image\n' >"$mirror/monarch-root.img.zst"
+printf '4096\n' >"$mirror/monarch-root.img.zst.size"
 ln -s offline.db.tar.gz "$mirror/offline.db"
 ln -s offline.files.tar.gz "$mirror/offline.files"
 
 bash "$ROOT/builder/mirror-checksums.sh" "$mirror" "$WORK/root"
 sums="$metadata/offline-mirror.sha256"
-[[ $(wc -l <"$sums") == 6 ]]
+[[ $(wc -l <"$sums") == 8 ]]
 (cd "$mirror" && sha256sum --check --strict --quiet "$sums")
 [[ $(cat "$metadata/offline-mirror.timeout") == 601 ]]
 grep -Fx 'TimeoutStartSec=601' "$WORK/root/etc/systemd/system/monarch-mirror-verify.service.d/50-size-timeout.conf"
 
-for corrupt in runtime-1-1-x86_64.pkg.tar.zst offline.db.tar.gz; do
+for corrupt in runtime-1-1-x86_64.pkg.tar.zst offline.db.tar.gz monarch-root.img.zst monarch-root.img.zst.size; do
   cp "$mirror/$corrupt" "$WORK/original"
   printf 'corruption\n' >>"$mirror/$corrupt"
   if (cd "$mirror" && sha256sum --check --strict --quiet "$sums") >"$WORK/out" 2>&1; then

@@ -14,11 +14,21 @@ packages=()
 for package in *.pkg.tar.*; do
   [[ $package == *.sig ]] || packages+=("$package")
 done
+if [[ -f $metadata/offline-mirror.shipped ]]; then
+  mapfile -t packages <"$metadata/offline-mirror.shipped"
+  for package in "${packages[@]}"; do
+    [[ $package != */* && $package == *.pkg.tar.* && $package != *.sig && -f $package ]] || {
+      echo "Invalid shipped package: $package" >&2
+      exit 1
+    }
+  done
+fi
 if (( ${#packages[@]} == 0 )); then
   echo "Cannot checksum an empty offline mirror" >&2
   exit 1
 fi
 files=("${packages[@]}" offline.db offline.db.tar.gz offline.files offline.files.tar.gz)
+files+=(monarch-root.img.zst monarch-root.img.zst.size)
 bytes=0
 for file in "${files[@]}"; do
   size=$(stat -L -c %s -- "$file")

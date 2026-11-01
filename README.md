@@ -81,8 +81,23 @@ The ISO contains two offline caches:
 - `/var/cache/python/offline/` contains the Python packages required by the
   Monarch installer.
 
-At boot, the ISO checks SHA-256 hashes of the pacman mirror's packages and
-repository databases. Installation waits for that check before partitioning or
+The builder also prepares `monarch-root.img.zst`, a compressed Btrfs image of
+the common target packages. Installation writes it to the fresh root filesystem,
+assigns a new filesystem UUID and machine ID, restores the requested subvolume
+layout, then installs only missing packages. Optional preinstalled applications
+remain a separate selection. Each target initializes its own pacman keyring.
+
+The shipped mirror keeps only installable archives not already provided at the
+same version by the root image. Its repository databases remain complete for
+dependency resolution. Pruning happens in the live filesystem after pacstrap,
+so the build cache retains the packages needed to build subsequent ISOs.
+
+A prebuilt UKI is reused only on UEFI systems whose kernel, keyboard and boot
+configuration still match the image. Hardware changes, deferred provisioning
+keys and BIOS installs use the normal on-target boot-image build.
+
+At boot, the ISO checks SHA-256 hashes of the root image, its size metadata,
+the pacman mirror's packages and repository databases. Installation waits for that check before partitioning or
 formatting, including free-space installs. Missing or damaged files stop the
 install with a diagnostic; a slow or unreadable medium is bounded by a
 size-based timeout. This integrity check does not replace the ISO signature

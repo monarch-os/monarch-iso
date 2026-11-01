@@ -33,6 +33,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import archinstall_adapter as arch
+from . import root_image
 from .command import capture, capture_identifier, require_text
 from .context import InstallContext
 from .keyboard import configure_keyboard
@@ -108,6 +109,7 @@ def _early_packages() -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_live(ctx: InstallContext) -> None:
+    root_image.validate_layout(ctx)
     if ctx.is_protected:
         info("› free-space install: skipping whole-disk cleanup")
     else:
@@ -169,6 +171,9 @@ def arch_install_system(ctx: InstallContext) -> None:
 
         installer.sanity_check(skip_ntp=True, skip_wkd=True)
 
+        info("› deploying the prebuilt CachyOS + Monarch root image")
+        root_image.install(ctx)
+
         if not pre_mounted and arch.is_encrypted(config):
             installer.generate_key_files()
 
@@ -178,7 +183,7 @@ def arch_install_system(ctx: InstallContext) -> None:
         _mount_offline_package_cache(ctx)
         _mask_mkinitcpio_pacman_hooks(ctx)
         try:
-            info("› installing base system (mkinitcpio deferred to final Limine UKI build)")
+            info("› configuring the base system and installing missing packages")
             # An empty kb_layout makes archinstall's set_keyboard_language skip
             # booting the target in a container just to run localectl; the
             # keymap is configured offline right after instead.
@@ -236,6 +241,8 @@ def arch_install_system(ctx: InstallContext) -> None:
         finally:
             _unmask_mkinitcpio_pacman_hooks(ctx)
             _unmount_offline_package_cache(ctx)
+
+        root_image.initialize_keyring(ctx.target)
 
         # Standard arch finishers.
         if config.timezone:
@@ -1297,7 +1304,12 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
     if fallback.exists() and (not source.is_file() or fallback.read_bytes() != source.read_bytes()):
         default_limine.write_text(default_text.rstrip() + "\nENABLE_LIMINE_FALLBACK=no\n")
 
-    subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
+    from .prebuilt_uki import deploy
+    used_prebuilt = arch.has_uefi() and deploy(
+        ctx.target, esp_root, _limine_setting(config_text, "CUSTOM_UKI_NAME", "monarch"), cmdline,
+    )
+    if not used_prebuilt:
+        subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
 
     subprocess.run(
         ["arch-chroot", str(ctx.target), "btrfs", "quota", "disable", "/"],

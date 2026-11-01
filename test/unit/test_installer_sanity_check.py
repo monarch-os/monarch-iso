@@ -63,6 +63,7 @@ class InstallerSanityCheckTest(unittest.TestCase):
                     },
                 )
                 with (
+                    mock.patch.object(phases_impl.root_image, "install"),
                     mock.patch.object(phases_impl, "arch", adapter),
                     mock.patch.object(phases_impl, "info"),
                     mock.patch.object(adapter, "is_pre_mount", return_value=pre_mounted),

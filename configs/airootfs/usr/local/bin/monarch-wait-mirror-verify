@@ -17,6 +17,12 @@ wait_for_mirror() {
     verification_error "Offline mirror checksums are missing; refusing to modify the disk."
     return 1
   }
+  for file in monarch-root.img.zst monarch-root.img.zst.size; do
+    grep -Eq "^[[:xdigit:]]{64}  ${file//./\\.}$" "$MIRROR_SUMS" || {
+      verification_error "Root image is not covered by the install medium checksums."
+      return 1
+    }
+  done
   limit=$(cat "$MIRROR_TIMEOUT" 2>/dev/null) || limit=""
   [[ $limit =~ ^[0-9]{1,8}$ ]] && (( 10#$limit >= 600 )) || {
     verification_error "Offline mirror timeout metadata is missing or invalid."
