@@ -268,11 +268,17 @@ expected_minimal_packages=$(resolve_expected_packages "${minimal_target_packages
 printf '%s\n' "$expected_minimal_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages-minimal"
 
 # The common image must respect the wizard's option to omit preinstalled apps.
+iso_subdir="$(sed -n 's/^install_dir="\(.*\)"$/\1/p' "$build_cache_dir/profiledef.sh")/x86_64"
+[[ $iso_subdir == ?*/x86_64 ]] || { echo "Cannot determine root image ISO directory" >&2; exit 1; }
+root_image_dir="$build_cache_dir/work/iso/$iso_subdir"
+mkdir -p "$root_image_dir"
+rm -f "$offline_mirror_dir/monarch-root.img.zst"{,.size,.packages}
 bash /builder/build-root-image.sh "$build_cache_dir/pacman-offline.conf" \
-  "$offline_mirror_dir/monarch-root.img.zst" \
+  "$root_image_dir/monarch-root.img.zst" \
   "${minimal_target_packages[@]}"
 metadata="$build_cache_dir/airootfs/usr/share/monarch-iso"
-mv "$offline_mirror_dir/monarch-root.img.zst.packages" "$metadata/root-image.packages"
+mv "$root_image_dir/monarch-root.img.zst.packages" "$metadata/root-image.packages"
+printf '/run/archiso/bootmnt/%s/monarch-root.img.zst\n' "$iso_subdir" >"$metadata/root-image.path"
 mapfile -t installable_packages < <(
   {
     printf '%s\n' "${target_packages[@]}"
@@ -295,7 +301,7 @@ bash /root/prune-offline-mirror.sh /var/cache/monarch/mirror/offline \
   </usr/share/monarch-iso/offline-mirror.shipped
 rm /root/prune-offline-mirror.sh
 EOF
-bash /builder/mirror-checksums.sh "$offline_mirror_dir" "$build_cache_dir/airootfs"
+bash /builder/mirror-checksums.sh "$offline_mirror_dir" "$build_cache_dir/airootfs" "$root_image_dir"
 
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted.

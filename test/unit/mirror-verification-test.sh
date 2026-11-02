@@ -7,32 +7,39 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/mirror" "$WORK/root"
 mirror="$WORK/mirror"
 metadata="$WORK/root/usr/share/monarch-iso"
+mkdir -p "$metadata" "$WORK/image"
+printf '/run/archiso/bootmnt/arch/x86_64/monarch-root.img.zst\n' >"$metadata/root-image.path"
 printf 'package payload\n' >"$mirror/runtime-1-1-x86_64.pkg.tar.zst"
 printf 'settings payload\n' >"$mirror/settings-1-1-any.pkg.tar.xz"
 printf 'signature\n' >"$mirror/runtime-1-1-x86_64.pkg.tar.zst.sig"
 printf 'database\n' >"$mirror/offline.db.tar.gz"
 printf 'file list\n' >"$mirror/offline.files.tar.gz"
-printf 'root image\n' >"$mirror/monarch-root.img.zst"
-printf '4096\n' >"$mirror/monarch-root.img.zst.size"
+printf 'root image\n' >"$WORK/image/monarch-root.img.zst"
+printf '4096\n' >"$WORK/image/monarch-root.img.zst.size"
 ln -s offline.db.tar.gz "$mirror/offline.db"
 ln -s offline.files.tar.gz "$mirror/offline.files"
 
-bash "$ROOT/builder/mirror-checksums.sh" "$mirror" "$WORK/root"
+bash "$ROOT/builder/mirror-checksums.sh" "$mirror" "$WORK/root" "$WORK/image"
 sums="$metadata/offline-mirror.sha256"
+grep -F '/run/archiso/bootmnt/arch/x86_64/monarch-root.img.zst' "$sums"
+# Map the ISO mount into the fixture without requiring a host mount or root.
+sed -i "s|/run/archiso/bootmnt/arch/x86_64|$WORK/image|g" "$sums"
 [[ $(wc -l <"$sums") == 8 ]]
 (cd "$mirror" && sha256sum --check --strict --quiet "$sums")
 [[ $(cat "$metadata/offline-mirror.timeout") == 601 ]]
 grep -Fx 'TimeoutStartSec=601' "$WORK/root/etc/systemd/system/monarch-mirror-verify.service.d/50-size-timeout.conf"
 
 for corrupt in runtime-1-1-x86_64.pkg.tar.zst offline.db.tar.gz monarch-root.img.zst monarch-root.img.zst.size; do
-  cp "$mirror/$corrupt" "$WORK/original"
-  printf 'corruption\n' >>"$mirror/$corrupt"
+  file="$mirror/$corrupt"
+  [[ $corrupt != monarch-root.* ]] || file="$WORK/image/$corrupt"
+  cp "$file" "$WORK/original"
+  printf 'corruption\n' >>"$file"
   if (cd "$mirror" && sha256sum --check --strict --quiet "$sums") >"$WORK/out" 2>&1; then
     echo "Corruption was accepted: $corrupt" >&2
     exit 1
   fi
   grep -F "$corrupt" "$WORK/out"
-  mv "$WORK/original" "$mirror/$corrupt"
+  mv "$WORK/original" "$file"
 done
 rm "$mirror/settings-1-1-any.pkg.tar.xz"
 if (cd "$mirror" && sha256sum --check --strict --quiet "$sums") >"$WORK/out" 2>&1; then
@@ -51,6 +58,8 @@ if bash "$ROOT/builder/mirror-checksums.sh" "$mirror" "$WORK/root" >"$WORK/out" 
 fi
 
 source "$ROOT/configs/airootfs/usr/local/bin/monarch-wait-mirror-verify"
+ROOT_IMAGE_PATH="$metadata/root-image.path"
+printf '%s\n' "$WORK/image/monarch-root.img.zst" >"$ROOT_IMAGE_PATH"
 MIRROR_SUMS=$sums
 MIRROR_TIMEOUT="$metadata/offline-mirror.timeout"
 

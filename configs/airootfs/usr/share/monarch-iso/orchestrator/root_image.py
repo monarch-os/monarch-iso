@@ -10,7 +10,10 @@ import subprocess
 import time
 from pathlib import Path
 
-IMAGE = Path('/var/cache/monarch/mirror/offline/monarch-root.img.zst')
+from .timing import timed
+
+IMAGE_PATH = Path('/usr/share/monarch-iso/root-image.path')
+IMAGE = Path(IMAGE_PATH.read_text().strip()) if IMAGE_PATH.is_file() else Path('/run/archiso/bootmnt/arch/x86_64/monarch-root.img.zst')
 STANDARD_SUBVOLUMES = {'@', '@home', '@log', '@pkg'}
 FAT = {'vfat', 'msdos', 'fat', 'exfat'}
 
@@ -130,7 +133,7 @@ def assert_empty(top: Path, allowed: set[str]) -> None:
 
 def unmount_tree(target: Path) -> None:
     for attempt in range(20):
-        result = subprocess.run(['umount', '-R', str(target)], capture_output=True, text=True)
+        result = subprocess.run(['umount', '-R', str(target)], capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
             return
         time.sleep(0.1)
@@ -164,15 +167,15 @@ def write_image(device: str) -> None:
 
 
 def refresh_uuid(device: str) -> None:
-    subprocess.run(['btrfstune', '-f', '-m', device], check=True)
+    subprocess.run(['btrfstune', '-f', '-m', device], check=True, timeout=120)
     result = subprocess.run(['btrfs', 'inspect-internal', 'dump-super', device],
-                            capture_output=True, text=True, check=True)
+                            capture_output=True, text=True, check=True, timeout=30)
     wanted = next((line.split()[-1] for line in result.stdout.splitlines() if line.startswith('fsid')), '')
     for attempt in range(50):
         subprocess.run(['udevadm', 'trigger', '--settle', '--action=change', device],
-                       check=False, capture_output=True)
+                       check=False, capture_output=True, timeout=30)
         values = [subprocess.run(['blkid', *flags, '-s', 'UUID', '-o', 'value', device],
-                                 capture_output=True, text=True, check=True).stdout.strip()
+                                 capture_output=True, text=True, check=True, timeout=30).stdout.strip()
                   for flags in (['-p'], [])]
         if wanted and values == [wanted, wanted]:
             return
@@ -188,6 +191,12 @@ def image_directory(top: Path, placed: list[tuple[str, Path]], path: Path) -> Pa
 
 def create_subvolume(top: Path, name: str, content: Path) -> None:
     destination = top / name
+    for path in (content, destination):
+        current = top
+        for part in path.relative_to(top).parts:
+            current = current / part
+            if current.is_symlink():
+                raise RuntimeError(f'Symlink-backed subvolume path: {current}')
     staged = None
     if destination.exists():
         staged = destination.with_name(destination.name + '.monarch-image')
@@ -262,8 +271,10 @@ def install(ctx) -> None:
     remaining = subprocess.run(['findmnt', '-rn', '-S', device], capture_output=True, text=True)
     if remaining.returncode != 1:
         raise RuntimeError('Cannot confirm the root device is unmounted; refusing image write')
-    write_image(device)
-    refresh_uuid(device)
+    with timed('F1.image_write'):
+        write_image(device)
+    with timed('F1.refresh_uuid'):
+        refresh_uuid(device)
     fat_paths = [Path(m['target']).relative_to(ctx.target) for m in mounts if m['fstype'] in FAT]
     stage = ctx.state_dir / 'image-esp'
     shutil.rmtree(stage, ignore_errors=True)
@@ -300,8 +311,8 @@ def install(ctx) -> None:
         if (stage / path).is_dir():
             subprocess.run(['cp', '-r', f'{stage / path}/.', str(ctx.target / path)], check=True)
     shutil.rmtree(stage, ignore_errors=True)
-    local_db = ctx.target / 'var/lib/pacman/local'
-    installed = {p.name.rsplit('-', 2)[0] for p in local_db.iterdir() if (p / 'desc').is_file()}
+    installed = set(subprocess.run(['pacman', '--root', str(ctx.target), '-Qq'],
+                                   capture_output=True, text=True, check=True, timeout=30).stdout.splitlines())
     missing = {'monarch', 'limine', 'archlinux-keyring', 'cachyos-keyring', 'monarch-keyring'} - installed
     if missing:
         raise RuntimeError(f'Root image lacks required packages: {", ".join(sorted(missing))}')

@@ -1,0 +1,5 @@
+60-mkinitcpio-remove.hook
+60-limine-mkinitcpio-remove-pre.hook
+80-limine-efi-deploy.hook
+90-limine-mkinitcpio-remove-post.hook
+90-mkinitcpio-install.hook

@@ -52,6 +52,7 @@ from archinstall.lib.mirror.mirror_handler import MirrorListHandler
 from archinstall.lib.models import Bootloader
 from archinstall.lib.models.device import DiskLayoutType, EncryptionType
 from archinstall.lib.models.users import User
+from archinstall.lib.pacman.config import PacmanConfig
 
 from .ui import info
 
@@ -68,23 +69,53 @@ def target_missing_packages(target: Path, names: list[str]) -> list[str]:
     return [name for name in names if name in missing]
 
 
-@contextmanager
-def installed_package_delta(installer):
-    """Keep archinstall's configuration steps; only reduce its pacstrap transactions."""
-    original = installer.pacman.strap
+def install_base_delta(installer: Installer, arch_config: ArchConfig, *, hostname, locale_config) -> None:
+    """Omarchy F1's archinstall 4.5 base sequence, with only missing packages strapped."""
+    disk_config = installer._disk_config
+    if disk_config.lvm_config:
+        raise RuntimeError('Root images do not support LVM layouts')
+    for mod in disk_config.device_modifications:
+        for part in mod.partitions:
+            if part.fs_type is None:
+                continue
+            installer._prepare_fs_type(part.fs_type)
+            if part in installer._disk_encryption.partitions:
+                installer._prepare_encrypt()
+    if ucode := installer._get_microcode():
+        (installer.target / 'boot' / ucode).unlink(missing_ok=True)
+        installer._base_packages.append(ucode.stem)
+    mirror_config = arch_config.mirror_config
+    pacman_conf = PacmanConfig(installer.target)
+    pacman_conf.enable(mirror_config.optional_repositories if mirror_config else [])
+    pacman_conf.apply()
+    if locale_config:
+        installer.set_vconsole(locale_config)
+    if delta := target_missing_packages(installer.target, installer._base_packages):
+        installer.pacman.strap(delta)
+    installer._helper_flags['base-strapped'] = True
+    pacman_conf.persist()
+    if arch_config.pacman_config:
+        pacman_conf.configure(arch_config.pacman_config)
+    if not installer._disable_fstrim:
+        installer.enable_periodic_trim()
+    if hostname:
+        installer.set_hostname(hostname)
+    if locale_config:
+        if not installer.set_locale(locale_config):
+            raise RuntimeError('Could not configure the target locale')
+        installer.set_keyboard_language(locale_config.kb_layout)
+    installer._helper_flags['base'] = True
+    for function in installer.post_base_install:
+        function(installer)
+    if services := installer._post_base_install_services:
+        installer.enable_service(services)
 
-    def strap(packages, *args, **kwargs):
-        names = [packages] if isinstance(packages, str) else list(packages)
-        missing = target_missing_packages(installer.target, names)
-        if not missing:
-            return True
-        return original(missing, *args, **kwargs)
 
-    installer.pacman.strap = strap
-    try:
-        yield
-    finally:
-        installer.pacman.strap = original
+def setup_zram_swap(installer: Installer) -> None:
+    if missing := target_missing_packages(installer.target, ['zram-generator']):
+        installer.pacman.strap(missing)
+    installer.enable_service('systemd-zram-setup@zram0.service')
+    installer._zram_enabled = True
 
 
 def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
@@ -171,8 +202,7 @@ def open_installer(
         kernels=arch_config.kernels,
         silent=silent,
     ) as installer:
-        with installed_package_delta(installer):
-            yield installer
+        yield installer
 
 
 def is_encrypted(arch_config: ArchConfig) -> bool:
@@ -266,10 +296,21 @@ def install_applications(installer: Installer, arch_config: ArchConfig) -> None:
     users = arch_config.auth_config.users if arch_config.auth_config else None
     handler = _application_handler()
     install_applications_method = handler.install_applications
-    if _method_accepts_users(install_applications_method):
-        install_applications_method(installer, app_config, users)
-    else:
-        install_applications_method(installer, app_config)
+    original = installer.add_additional_packages
+
+    def strap_missing(packages):
+        names = [packages] if isinstance(packages, str) else list(packages)
+        if missing := target_missing_packages(installer.target, names):
+            original(missing)
+
+    installer.add_additional_packages = strap_missing
+    try:
+        if _method_accepts_users(install_applications_method):
+            install_applications_method(installer, app_config, users)
+        else:
+            install_applications_method(installer, app_config)
+    finally:
+        installer.add_additional_packages = original
 
 
 def root_user(arch_config: ArchConfig) -> User | None:

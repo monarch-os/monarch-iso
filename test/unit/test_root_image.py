@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -74,6 +75,31 @@ class RootImageTest(unittest.TestCase):
         write.assert_not_called()
         unmount.assert_not_called()
 
+    def test_stalled_unmount_stops_without_retrying_or_writing(self):
+        def stalled(command, **kwargs):
+            self.assertGreater(kwargs['timeout'], 0)
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'], stderr=b'busy target')
+
+        with mock.patch.object(root_image.subprocess, 'run', side_effect=stalled) as run, \
+                mock.patch.object(root_image.time, 'sleep') as sleep:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                root_image.unmount_tree(self.root)
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_uuid_refresh_bounds_each_external_call_and_checks_both_probes(self):
+        def result(command, **kwargs):
+            self.assertGreater(kwargs['timeout'], 0)
+            output = 'fsid unique\n' if command[0] == 'btrfs' else 'unique\n'
+            return subprocess.CompletedProcess(command, 0, output)
+
+        with mock.patch.object(root_image.subprocess, 'run', side_effect=result) as run:
+            root_image.refresh_uuid('/dev/test')
+        probes = [call.args[0] for call in run.call_args_list if call.args[0][0] == 'blkid']
+        self.assertEqual(len(probes), 2)
+        self.assertIn('-p', probes[0])
+        self.assertNotIn('-p', probes[1])
+
     @unittest.skipUnless(shutil.which('pacman'), 'pacman required')
     def test_package_delta_uses_real_pacman_versioned_provides(self):
         adapter = load_adapter()
@@ -84,16 +110,94 @@ class RootImageTest(unittest.TestCase):
         self.assertEqual(adapter.target_missing_packages(self.root, ['replacement', 'original>=2', 'original>=3', 'absent']),
                          ['original>=3', 'absent'])
 
-    def test_delta_restores_pacstrap_after_failure(self):
+    def test_application_delta_restores_method_after_failure(self):
         adapter = load_adapter()
         strap = mock.Mock(side_effect=RuntimeError('install failed'))
-        installer = types.SimpleNamespace(target=self.root, pacman=types.SimpleNamespace(strap=strap))
-        with mock.patch.object(adapter, 'target_missing_packages', return_value=['missing']):
+        installer = types.SimpleNamespace(target=self.root, add_additional_packages=strap)
+        config = types.SimpleNamespace(app_config=True, auth_config=None)
+        def install_apps(installer, config):
+            installer.add_additional_packages(['present', 'missing'])
+        handler = types.SimpleNamespace(install_applications=install_apps)
+        with mock.patch.object(adapter, 'target_missing_packages', return_value=['missing']), \
+                mock.patch.object(adapter, '_application_handler', return_value=handler):
             with self.assertRaisesRegex(RuntimeError, 'install failed'):
-                with adapter.installed_package_delta(installer):
-                    installer.pacman.strap(['present', 'missing'])
-        self.assertIs(installer.pacman.strap, strap)
+                adapter.install_applications(installer, config)
+        self.assertIs(installer.add_additional_packages, strap)
         strap.assert_called_once_with(['missing'])
+
+    def test_base_delta_configures_an_already_populated_root_without_pacstrap(self):
+        adapter = load_adapter()
+        part = types.SimpleNamespace(fs_type='btrfs')
+        disk = types.SimpleNamespace(lvm_config=None, device_modifications=[types.SimpleNamespace(partitions=[part])])
+        installer = mock.Mock(target=self.root, _disk_config=disk,
+                              _disk_encryption=types.SimpleNamespace(partitions=[part]),
+                              _base_packages=['base'], _helper_flags={}, _disable_fstrim=False,
+                              _post_base_install_services=['NetworkManager'])
+        callback = mock.Mock()
+        installer.post_base_install = [callback]
+        installer._get_microcode.return_value = Path('intel-ucode.img')
+        installer.set_locale.return_value = True
+        locale = types.SimpleNamespace(kb_layout='')
+        config = types.SimpleNamespace(mirror_config=None, pacman_config=None)
+        with mock.patch.object(adapter, 'PacmanConfig') as pacman, \
+                mock.patch.object(adapter, 'target_missing_packages', return_value=[]):
+            adapter.install_base_delta(installer, config, hostname='monarch', locale_config=locale)
+        installer.pacman.strap.assert_not_called()
+        installer._prepare_fs_type.assert_called_once_with('btrfs')
+        installer._prepare_encrypt.assert_called_once_with()
+        installer.set_vconsole.assert_called_once_with(locale)
+        installer.set_hostname.assert_called_once_with('monarch')
+        installer.set_locale.assert_called_once_with(locale)
+        installer.enable_periodic_trim.assert_called_once_with()
+        installer.enable_service.assert_called_once_with(['NetworkManager'])
+        callback.assert_called_once_with(installer)
+        pacman.return_value.persist.assert_called_once_with()
+        self.assertEqual(installer._helper_flags, {'base-strapped': True, 'base': True})
+
+    def test_subvolume_symlink_sources_and_parents_are_rejected_before_mutation(self):
+        top = self.root / 'image'
+        top.mkdir()
+        external = self.root / 'external'
+        external.mkdir()
+        witness = external / 'keep'
+        witness.write_text('preserve')
+        for link in (str(external), '../external'):
+            (top / 'link').symlink_to(link)
+            for content, name in ((top / 'link', '@run'), (top / 'link/child', '@run'),
+                                  (top, 'link/child')):
+                with self.subTest(link=link, name=name), \
+                        mock.patch.object(root_image.subprocess, 'run') as run:
+                    with self.assertRaisesRegex(RuntimeError, 'Symlink-backed'):
+                        root_image.create_subvolume(top, name, content)
+                    run.assert_not_called()
+                    self.assertEqual(witness.read_text(), 'preserve')
+            (top / 'link').unlink()
+
+    def test_encrypted_cmdline_serves_both_initramfs_flavours(self):
+        original = 'root=/dev/mapper/root cryptdevice=UUID=abc:root:allow-discards,no-read-workqueue'
+        cmdline = prebuilt_uki.with_sd_encrypt(original)
+        self.assertIn(original, cmdline)
+        self.assertIn('rd.luks.name=abc=root', cmdline)
+        self.assertIn('rd.luks.options=abc=discard,no-read-workqueue', cmdline)
+        self.assertEqual(prebuilt_uki.with_sd_encrypt(cmdline), cmdline)
+        self.assertEqual(prebuilt_uki.with_sd_encrypt('root=UUID=abc'), 'root=UUID=abc')
+
+    def test_archinstall_partuuid_is_resolved_to_the_luks_header_uuid(self):
+        original = 'cryptdevice=PARTUUID=partition-id:root root=/dev/mapper/root'
+        with mock.patch.object(prebuilt_uki.subprocess, 'run', return_value=
+                               subprocess.CompletedProcess([], 0, 'luks-header-id\n')) as run:
+            cmdline = prebuilt_uki.with_sd_encrypt(original)
+        self.assertIn(original, cmdline)
+        self.assertIn('rd.luks.name=luks-header-id=root', cmdline)
+        self.assertNotIn('rd.luks.name=partition-id=', cmdline)
+        self.assertIn('/dev/disk/by-partuuid/partition-id', run.call_args.args[0])
+        self.assertGreater(run.call_args.kwargs['timeout'], 0)
+
+    def test_unresolved_encrypted_partition_stops_before_generating_boot_parameters(self):
+        with mock.patch.object(prebuilt_uki.subprocess, 'run', return_value=
+                               subprocess.CompletedProcess([], 0, '')):
+            with self.assertRaises(RuntimeError):
+                prebuilt_uki.with_sd_encrypt('cryptdevice=PARTUUID=unknown:root')
 
     @unittest.skipUnless(shutil.which('zstd'), 'zstd required')
     def test_decoder_failure_is_not_hidden_by_a_successful_writer(self):
@@ -160,6 +264,39 @@ class RootImageTest(unittest.TestCase):
                 path.write_text(contents)
                 self.assertNotEqual(prebuilt_uki.fingerprint(self.root), baseline)
                 path.unlink()
+
+    def test_built_uki_survives_default_console_configuration_and_deploys(self):
+        kernel = self.root / 'usr/lib/modules/1.0/pkgbase'
+        kernel.parent.mkdir(parents=True)
+        kernel.write_text('linux-cachyos\n')
+        (self.root / 'etc').mkdir()
+        tools = self.root / 'tools'
+        tools.mkdir()
+        python = tools / 'python'
+        python.write_text(f'#!/bin/bash\nexec {sys.executable} {SOURCE}/orchestrator/prebuilt_uki.py "${{@:2}}"\n')
+        chroot = tools / 'arch-chroot'
+        chroot.write_text('#!/bin/bash\nif [[ $2 == mkinitcpio ]]; then\n'
+                          '  cp "$1/test.efi" "$1/var/lib/monarch-iso/prebuilt-uki.efi"\nfi\n')
+        for tool in (python, chroot):
+            tool.chmod(0o755)
+        self.uki()
+        subprocess.run(['bash', str(SOURCE.parents[4] / 'builder/prebuild-uki.sh'), str(self.root)],
+                       env={**os.environ, 'PATH': f'{tools}:{os.environ["PATH"]}'}, check=True)
+        (self.root / 'etc/vconsole.conf').write_text('KEYMAP=us\nFONT=default8x16\n')
+        esp = self.root / 'boot'
+        with mock.patch.object(prebuilt_uki.subprocess, 'run'):
+            self.assertTrue(prebuilt_uki.deploy(self.root, esp, 'test', 'root=UUID=unique'))
+        deployed = esp / 'EFI/Linux/test_linux-cachyos.efi'
+        self.assertIn(b'root=UUID=unique', deployed.read_bytes())
+        for config, text in [('etc/vconsole.conf', 'KEYMAP=fr\nFONT=default8x16\n'),
+                             ('etc/monarch/provisioning.key', 'secret')]:
+            (self.root / 'etc/vconsole.conf').write_text('KEYMAP=us\nFONT=default8x16\n')
+            path = self.root / config
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            with mock.patch.object(prebuilt_uki.subprocess, 'run') as run:
+                self.assertFalse(prebuilt_uki.deploy(self.root, esp, 'test', 'root=UUID=unique'))
+                run.assert_not_called()
 
 
 if __name__ == '__main__':

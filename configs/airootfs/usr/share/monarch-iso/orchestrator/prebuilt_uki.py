@@ -12,7 +12,8 @@ from pathlib import Path
 
 def fingerprint(root: Path) -> str:
     digest = hashlib.sha256()
-    paths = [root / 'etc/mkinitcpio.conf']
+    paths = [root / 'etc/mkinitcpio.conf', root / 'usr/lib/monarch/snapshot-overlay',
+             root / 'usr/lib/systemd/system/monarch-snapshot-overlay.service']
     for directory in ('etc/mkinitcpio.conf.d', 'etc/modprobe.d', 'usr/lib/modprobe.d',
                       'usr/lib/initcpio/install', 'usr/lib/initcpio/hooks'):
         paths.extend(sorted((root / directory).glob('*')))
@@ -35,6 +36,41 @@ def fingerprint(root: Path) -> str:
             if path.is_file():
                 digest.update(str(path.relative_to(root)).encode() + path.read_bytes())
     return digest.hexdigest()
+
+
+def luks_uuid_of(spec: str) -> str:
+    if spec.startswith('UUID='):
+        return spec.removeprefix('UUID=')
+    if spec.startswith('PARTUUID='):
+        device = '/dev/disk/by-partuuid/' + spec.removeprefix('PARTUUID=')
+    elif spec.startswith('/dev/'):
+        device = spec
+    else:
+        raise RuntimeError(f'Unsupported cryptdevice source: {spec}')
+    result = subprocess.run(['blkid', '-s', 'UUID', '-o', 'value', device],
+                            check=True, capture_output=True, text=True, timeout=10)
+    uuid = result.stdout.strip()
+    if not uuid:
+        raise RuntimeError(f'Cannot determine the LUKS UUID of {spec}')
+    return uuid
+
+
+def with_sd_encrypt(cmdline: str) -> str:
+    """One command line for the prebuilt systemd UKI and later busybox rebuilds."""
+    extra = []
+    for param in cmdline.split():
+        if not param.startswith('cryptdevice='):
+            continue
+        spec, separator, rest = param.removeprefix('cryptdevice=').partition(':')
+        name, _, options = rest.partition(':')
+        if not separator or not name:
+            raise RuntimeError('Invalid cryptdevice mapping')
+        uuid = luks_uuid_of(spec)
+        if f'rd.luks.name={uuid}=' not in cmdline:
+            extra.append(f'rd.luks.name={uuid}={name}')
+        if options and f'rd.luks.options={uuid}=' not in cmdline:
+            extra.append(f'rd.luks.options={uuid}={options.replace("allow-discards", "discard")}')
+    return ' '.join(cmdline.split() + extra)
 
 
 def embed_cmdline(path: Path, cmdline: str) -> bool:
@@ -73,14 +109,18 @@ def deploy(target: Path, esp: Path, prefix: str, cmdline: str) -> bool:
     uki = cache / 'prebuilt-uki.efi'
     metadata = cache / 'prebuilt-uki.json'
     if not uki.is_file() or not metadata.is_file():
+        print('Prebuilt UKI unavailable: image or metadata missing', flush=True)
         return False
     saved = json.loads(metadata.read_text())
     if saved['fingerprint'] != fingerprint(target):
+        print('Prebuilt UKI unavailable: boot inputs changed', flush=True)
         return False
     if (target / 'etc/monarch/provisioning.key').exists():
+        print('Prebuilt UKI unavailable: provisioning key requires embedding', flush=True)
         return False
     kernels = [p.read_text().strip() for p in (target / 'usr/lib/modules').glob('*/pkgbase')]
     if kernels != [saved['kernel']]:
+        print('Prebuilt UKI unavailable: kernel selection changed', flush=True)
         return False
     if not re.fullmatch('[a-z0-9]+', prefix):
         prefix = (target / 'etc/machine-id').read_text().strip()
@@ -91,6 +131,7 @@ def deploy(target: Path, esp: Path, prefix: str, cmdline: str) -> bool:
     staged = destination.with_suffix('.tmp')
     shutil.copy2(uki, staged)
     if not embed_cmdline(staged, cmdline):
+        print('Prebuilt UKI unavailable: command line cannot be embedded', flush=True)
         staged.unlink()
         return False
     subprocess.run(['arch-chroot', str(target), 'limine-install', '--no-efi-register'], check=True)
@@ -98,6 +139,7 @@ def deploy(target: Path, esp: Path, prefix: str, cmdline: str) -> bool:
     subprocess.run(['arch-chroot', str(target), 'limine-entry-tool', '--add-uki', saved['kernel'],
                     '/' + str(destination.relative_to(target)), '--comment', 'Pre-built UKI',
                     '--no-mutex', '--no-hooks'], check=True)
+    print('Prebuilt UKI reused', flush=True)
     return True
 
 

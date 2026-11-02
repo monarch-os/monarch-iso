@@ -39,6 +39,7 @@ class ShippedMirrorTest(unittest.TestCase):
         metadata = airootfs / 'usr/share/monarch-iso'
         metadata.mkdir(parents=True)
         (metadata / 'offline-mirror.shipped').write_text('\n'.join(selected) + '\n')
+        (metadata / 'root-image.path').write_text('/run/archiso/bootmnt/arch/x86_64/monarch-root.img.zst\n')
         (self.root / 'offline.db').symlink_to('offline.db.tar.gz')
         (self.root / 'offline.files.tar.gz').write_text('file index')
         (self.root / 'offline.files').symlink_to('offline.files.tar.gz')
@@ -54,7 +55,9 @@ class ShippedMirrorTest(unittest.TestCase):
         self.assertFalse((self.root / self.filenames['live']).exists())
         for filename in selected:
             self.assertTrue((self.root / filename).is_file())
-        subprocess.run(['sha256sum', '--check', '--strict', str(metadata / 'offline-mirror.sha256')],
+        sums = metadata / 'offline-mirror.sha256'
+        sums.write_text(sums.read_text().replace('/run/archiso/bootmnt/arch/x86_64', str(self.root)))
+        subprocess.run(['sha256sum', '--check', '--strict', str(sums)],
                        cwd=self.root, check=True, capture_output=True)
 
     def test_invalid_selection_fails_before_any_archive_is_removed(self):

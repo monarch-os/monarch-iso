@@ -25,11 +25,22 @@ class EncryptedUkiValidationTest(unittest.TestCase):
 
         phases_impl._assert_encrypted_uki_contents("monarch.efi", config, archive)
 
-    def test_accepts_systemd_sd_encrypt_and_cryptsetup(self):
+    def test_accepts_systemd_sd_encrypt_and_its_unlock_binary(self):
         config = "HOOKS=(base systemd block sd-encrypt filesystems fsck)"
-        archive = "usr/bin/cryptsetup\nusr/lib/systemd/system-generators/systemd-cryptsetup-generator\n"
+        archive = "usr/lib/systemd/systemd-cryptsetup\nusr/lib/systemd/system-generators/systemd-cryptsetup-generator\n"
 
         phases_impl._assert_encrypted_uki_contents("monarch.efi", config, archive)
+
+    def test_rejects_missing_or_mismatched_unlock_components(self):
+        generator = 'usr/lib/systemd/system-generators/systemd-cryptsetup-generator\n'
+        for config, archive in (
+            ('HOOKS=(base systemd sd-encrypt)', generator),
+            ('HOOKS=(base systemd sd-encrypt)', 'usr/lib/systemd/systemd-cryptsetup\n'),
+            ('HOOKS=(base systemd sd-encrypt)', 'usr/bin/cryptsetup\n' + generator),
+            ('HOOKS=(base udev encrypt)', 'usr/lib/systemd/systemd-cryptsetup\n' + generator),
+        ):
+            with self.subTest(config=config, archive=archive), self.assertRaises(RuntimeError):
+                phases_impl._assert_encrypted_uki_contents('monarch.efi', config, archive)
 
 
 if __name__ == "__main__":

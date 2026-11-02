@@ -65,4 +65,7 @@ EOF
   jq -e '.hostname == "monarch-test" and .disk_config.device_modifications[0].device == "/dev/vda" and .monarch_install.mode == "full_disk"' "$tmp/config.json" >/dev/null
   cmp "$SSH_KEY.pub" "$tmp/key.pub"
   echo "ok - autoinstall uses the production configuration generator and the test SSH key"
+  MONARCH_INTEGRATION_MINIMAL=true PATH="$tmp/bin:$PATH" CIDATA_CAPTURE="$tmp/minimal.json" KEY_CAPTURE="$tmp/key.pub" build_cidata
+  jq -e '.monarch_install.include_preinstalls == false' "$tmp/minimal.json" >/dev/null
+  echo "ok - minimal integration disables optional preinstalls through the production generator"
 )

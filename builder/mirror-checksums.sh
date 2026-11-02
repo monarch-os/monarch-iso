@@ -4,6 +4,7 @@ set -euo pipefail
 
 mirror=$(realpath -- "$1")
 airootfs=$(realpath -- "$2")
+image_dir=$(realpath -- "${3:-$mirror}")
 metadata="$airootfs/usr/share/monarch-iso"
 dropin="$airootfs/etc/systemd/system/monarch-mirror-verify.service.d"
 mkdir -p "$metadata" "$dropin"
@@ -28,7 +29,6 @@ if (( ${#packages[@]} == 0 )); then
   exit 1
 fi
 files=("${packages[@]}" offline.db offline.db.tar.gz offline.files offline.files.tar.gz)
-files+=(monarch-root.img.zst monarch-root.img.zst.size)
 bytes=0
 for file in "${files[@]}"; do
   size=$(stat -L -c %s -- "$file")
@@ -38,6 +38,15 @@ done
 sums=$(mktemp "$metadata/offline-mirror.sha256.XXXXXX")
 trap 'rm -f "$sums"' EXIT
 sha256sum -- "${files[@]}" >"$sums"
+image_path=$(cat "$metadata/root-image.path")
+[[ $image_path == /run/archiso/bootmnt/*/x86_64/monarch-root.img.zst && $image_path != *..* ]] || exit 1
+for suffix in '' .size; do
+  file="$image_dir/monarch-root.img.zst$suffix"
+  size=$(stat -L -c %s -- "$file")
+  (( bytes += size )) || true
+  hash=$(sha256sum -- "$file")
+  printf '%s  %s%s\n' "${hash%% *}" "$image_path" "$suffix" >>"$sums"
+done
 chmod 644 "$sums"
 mv "$sums" "$metadata/offline-mirror.sha256"
 

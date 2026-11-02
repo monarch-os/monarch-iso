@@ -33,14 +33,13 @@ trap cleanup EXIT
 
 # There is no ESP during image creation; deployment hooks run on the target.
 mkdir -p /etc/pacman.d/hooks
-for hook in 60-mkinitcpio-remove.hook 60-limine-mkinitcpio-remove-pre.hook \
-  80-limine-efi-deploy.hook 90-limine-mkinitcpio-remove-post.hook 90-mkinitcpio-install.hook; do
+while IFS= read -r hook; do
   path="/etc/pacman.d/hooks/$hook"
   [[ ! -L $path || $(readlink "$path") != /dev/null ]] || continue
   if [[ -e $path || -L $path ]]; then mv "$path" "$work/$hook"; fi
   hooks+=("$hook")
   ln -s /dev/null "$path"
-done
+done </configs/airootfs/usr/share/monarch-iso/deferred-boot-hooks
 
 truncate -s 24G "$backing"
 [[ -e /dev/loop-control ]] || mknod /dev/loop-control c 10 237
@@ -55,7 +54,7 @@ btrfs subvolume create "$mountpoint/monarch-root"
 root="$mountpoint/monarch-root"
 
 # Never distribute a shared pacman signing identity or machine identity.
-sed "/^\[options\]/a CacheDir = $(dirname "$output")" "$config" >"$work/pacman.conf"
+sed '/^\[options\]/a CacheDir = /var/cache/monarch/mirror/offline' "$config" >"$work/pacman.conf"
 pacstrap -C "$work/pacman.conf" -c -G -M "$root" "$@"
 gpgconf --homedir "$root/etc/pacman.d/gnupg" --kill all 2>/dev/null || true
 rm -rf "$root/etc/pacman.d/gnupg"
@@ -64,6 +63,8 @@ rm -f "$root/var/lib/dbus/machine-id" "$root/etc/ssh/ssh_host_"* "$root/var/lib/
 rm -rf "$root/var/cache/pacman/pkg/"* "$root/etc/resolv.conf"
 find "$root/var/log" -mindepth 1 ! -name pacman.log -delete
 
+# This keyboard policy applies to every install, independently of its hardware.
+arch-chroot "$root" bash /usr/share/monarch/install/hardware/fix-fkeys.sh
 bash /builder/prebuild-uki.sh "$root"
 pacman --root "$root" --dbpath "$root/var/lib/pacman" -Q >"$output.packages"
 

@@ -16,6 +16,7 @@
 #   --no-preview   Do not open the collected screenshots in imv
 #   --offline      Block guest network access except test-host SSH and bootstrap
 #   --cpus N       Guest vCPU count (default: host CPU count)
+#   --minimal      Install without optional preinstalled applications
 
 set -euo pipefail
 
@@ -30,6 +31,7 @@ export MONARCH_INTEGRATION_MEMORY=8192
 export MONARCH_INTEGRATION_INSTALL_TIMEOUT=2400
 export MONARCH_INTEGRATION_NO_PREVIEW=false
 export MONARCH_INTEGRATION_OFFLINE=false
+export MONARCH_INTEGRATION_MINIMAL=false
 export MONARCH_INTEGRATION_CPUS="${MONARCH_INTEGRATION_CPUS:-$(nproc)}"
 
 while (($#)); do
@@ -37,6 +39,7 @@ while (($#)); do
     --reuse-base) REUSE_BASE=true ;;
     --no-preview) MONARCH_INTEGRATION_NO_PREVIEW=true ;;
     --offline) MONARCH_INTEGRATION_OFFLINE=true ;;
+    --minimal) MONARCH_INTEGRATION_MINIMAL=true ;;
     --cpus) MONARCH_INTEGRATION_CPUS="$2"; shift ;;
     --port) MONARCH_INTEGRATION_SSH_PORT="$2"; shift ;;
     --memory) MONARCH_INTEGRATION_MEMORY="$2"; shift ;;

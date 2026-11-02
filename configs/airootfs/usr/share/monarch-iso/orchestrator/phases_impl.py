@@ -38,6 +38,7 @@ from .command import capture, capture_identifier, require_text
 from .context import InstallContext
 from .keyboard import configure_keyboard
 from .ui import error, info
+from .timing import timed
 
 
 # Build metadata is diagnostic only. Monarch deliberately has no release
@@ -162,7 +163,8 @@ def arch_install_system(ctx: InstallContext) -> None:
 
     if not pre_mounted:
         info("› partitioning + formatting + encrypting")
-        arch.perform_filesystem_operations(config)
+        with timed("F1.prepare_filesystems"):
+            arch.perform_filesystem_operations(config)
 
     info("› opening installer context")
     with arch.open_installer(config, ctx.target, silent=True) as installer:
@@ -172,7 +174,8 @@ def arch_install_system(ctx: InstallContext) -> None:
         installer.sanity_check(skip_ntp=True, skip_wkd=True)
 
         info("› deploying the prebuilt CachyOS + Monarch root image")
-        root_image.install(ctx)
+        with timed("F1.deploy_root"):
+            root_image.install(ctx)
 
         if not pre_mounted and arch.is_encrypted(config):
             installer.generate_key_files()
@@ -188,22 +191,19 @@ def arch_install_system(ctx: InstallContext) -> None:
             # booting the target in a container just to run localectl; the
             # keymap is configured offline right after instead.
             kb_layout = config.locale_config.kb_layout if config.locale_config else ""
-            installer.minimal_installation(
-                optional_repositories=(
-                    config.mirror_config.optional_repositories
-                    if config.mirror_config else []
-                ),
-                mkinitcpio=False,
-                hostname=config.hostname,
-                locale_config=(
-                    replace(config.locale_config, kb_layout="")
-                    if config.locale_config else None
-                ),
-                pacman_config=config.pacman_config,
-            )
+            with timed("F1.base_configuration"):
+                arch.install_base_delta(
+                    installer, config,
+                    hostname=config.hostname,
+                    locale_config=(
+                        replace(config.locale_config, kb_layout="")
+                        if config.locale_config else None
+                    ),
+                )
 
             # DKMS must build against the target kernel, not the live ISO kernel.
-            installer.add_additional_packages([f"{kernel}-headers" for kernel in config.kernels])
+            if missing := arch.target_missing_packages(ctx.target, [f"{kernel}-headers" for kernel in config.kernels]):
+                installer.add_additional_packages(missing)
             _validate_kernel_headers(ctx)
 
             if not configure_keyboard(installer.target, kb_layout):
@@ -213,14 +213,16 @@ def arch_install_system(ctx: InstallContext) -> None:
                 installer.set_mirrors(mirror_handler, config.mirror_config, on_target=True)
 
             if config.swap and config.swap.enabled:
-                installer.setup_swap(algo=config.swap.algorithm)
+                arch.setup_zram_swap(installer)
                 _drop_archinstall_zram_conf(ctx)
 
             _install_early_packages(installer)
             _configure_limine_boot(ctx, installer, config)
 
             info("› installing Monarch runtime + monarch-base.packages")
-            installer.add_additional_packages(_runtime_package_list(ctx))
+            with timed("F1.runtime_packages"):
+                if missing := arch.target_missing_packages(ctx.target, _runtime_package_list(ctx)):
+                    installer.add_additional_packages(missing)
 
             # Tailscale is bundled in the offline mirror but only installed
             # when an autoinstall drive staged an auth key; must happen here,
@@ -242,7 +244,8 @@ def arch_install_system(ctx: InstallContext) -> None:
             _unmask_mkinitcpio_pacman_hooks(ctx)
             _unmount_offline_package_cache(ctx)
 
-        root_image.initialize_keyring(ctx.target)
+        with timed("F1.initialize_keyring"):
+            root_image.initialize_keyring(ctx.target)
 
         # Standard arch finishers.
         if config.timezone:
@@ -503,6 +506,8 @@ def _write_limine_defaults(
     esp_mount: str,
     enable_fallback: bool | None = None,
 ) -> None:
+    from .prebuilt_uki import with_sd_encrypt
+    cmdline = with_sd_encrypt(cmdline)
     if not cmdline.strip():
         raise RuntimeError("Could not compute kernel cmdline from install config")
     if "root=" not in cmdline:
@@ -555,13 +560,7 @@ def _limine_template(ctx: InstallContext, filename: str) -> Path:
     raise RuntimeError(f"Limine template {filename} not found. Searched:\n  {searched}")
 
 
-DEFERRED_BOOT_HOOKS = (
-    "60-mkinitcpio-remove.hook",
-    "60-limine-mkinitcpio-remove-pre.hook",
-    "80-limine-efi-deploy.hook",
-    "90-limine-mkinitcpio-remove-post.hook",
-    "90-mkinitcpio-install.hook",
-)
+DEFERRED_BOOT_HOOKS = tuple((Path(__file__).parent.parent / "deferred-boot-hooks").read_text().splitlines())
 
 # Inside the target chroot, only the install hook is worth deferring.
 # limine-entry-tool's 90-mkinitcpio-install.hook triggers on usr/lib/firmware/*,
@@ -598,13 +597,15 @@ def _install_early_packages(installer) -> None:
     luarocks_packages = _target_bootstrap_group("early-luarocks")
 
     info(f"› installing early Monarch packages: {', '.join(bootstrap_packages)}")
-    installer.add_additional_packages(bootstrap_packages)
+    if missing := arch.target_missing_packages(installer.target, bootstrap_packages):
+        installer.add_additional_packages(missing)
 
     # Install LuaRocks before monarch-nvim pulls in lua51-lpeg. Arch's
     # lua-luarocks post_install rebuilds existing manifests before the
     # unversioned luarocks-admin exists if both arrive in one transaction.
     info(f"› installing LuaRocks prerequisites: {', '.join(luarocks_packages)}")
-    installer.add_additional_packages(luarocks_packages)
+    if missing := arch.target_missing_packages(installer.target, luarocks_packages):
+        installer.add_additional_packages(missing)
 
 
 def _mount_offline_package_cache(ctx: InstallContext) -> None:
@@ -1305,11 +1306,13 @@ def finalize_limine_boot(ctx: InstallContext) -> None:
         default_limine.write_text(default_text.rstrip() + "\nENABLE_LIMINE_FALLBACK=no\n")
 
     from .prebuilt_uki import deploy
-    used_prebuilt = arch.has_uefi() and deploy(
-        ctx.target, esp_root, _limine_setting(config_text, "CUSTOM_UKI_NAME", "monarch"), cmdline,
-    )
-    if not used_prebuilt:
-        subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
+    with timed("F1.finalize_uki"):
+        used_prebuilt = arch.has_uefi() and deploy(
+            ctx.target, esp_root, _limine_setting(config_text, "CUSTOM_UKI_NAME", "monarch"), cmdline,
+        )
+        if not used_prebuilt:
+            info("› rebuilding the UKI on target")
+            subprocess.run(["arch-chroot", str(ctx.target), "limine-update"], check=True)
 
     subprocess.run(
         ["arch-chroot", str(ctx.target), "btrfs", "quota", "disable", "/"],
@@ -1751,15 +1754,19 @@ def _validate_encrypted_uki(uki: Path) -> None:
 
 
 def _assert_encrypted_uki_contents(uki: str, config: str, archive: str) -> None:
-    has_unlock_hook = re.search(r"\b(?:encrypt|sd-encrypt)\b", config) is not None
-    has_cryptsetup = any(
-        entry.rstrip() == "usr/bin/cryptsetup"
-        for entry in archive.splitlines()
-    )
-    if not has_unlock_hook or not has_cryptsetup:
+    files = set(archive.splitlines())
+    hooks_match = re.search(r'HOOKS=\((.*?)\)', config, re.DOTALL)
+    hooks = {word.strip('\"\'') for word in hooks_match[1].split()} if hooks_match else set()
+    busybox = 'encrypt' in hooks and 'usr/bin/cryptsetup' in files
+    systemd = 'sd-encrypt' in hooks and {
+        'usr/lib/systemd/systemd-cryptsetup',
+        'usr/lib/systemd/system-generators/systemd-cryptsetup-generator',
+    } <= files
+    if not (busybox or systemd):
         raise RuntimeError(
             f"{uki} cannot unlock an encrypted root: "
-            "its initramfs must contain encrypt or sd-encrypt and /usr/bin/cryptsetup"
+            "its initramfs must contain encrypt with cryptsetup, or sd-encrypt "
+            "with systemd-cryptsetup and its generator"
         )
 
 

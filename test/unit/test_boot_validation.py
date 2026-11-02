@@ -183,6 +183,8 @@ class BootValidationTest(unittest.TestCase):
         installer.add_additional_packages.side_effect = lambda packages: events.append(packages)
         installer.create_users.side_effect = lambda accounts: events.append(("users", accounts))
         with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(phases.arch, 'install_base_delta', create=True))
+            stack.enter_context(mock.patch.object(phases.arch, 'target_missing_packages', side_effect=lambda target, names: names, create=True))
             stack.enter_context(mock.patch.object(phases.root_image, "install", side_effect=lambda ctx: events.append("image")))
             stack.enter_context(mock.patch.object(phases.root_image, "initialize_keyring"))
             for name, result in (("is_pre_mount", True), ("open_installer", installer), ("sanity_check", None), ("root_user", None)):
