@@ -61,6 +61,8 @@ sed -n '/^source \/builder\/local-package-dependencies.sh/,/^mapfile -t required
     'provides = unversioned-api' 'depend = external>=2' 'depend = external<4' \
     'depend = unversioned-api>=1' 'depend = settings-only'
   runtime_package="$tmp/packages/monarch-2:3.0-3-any.pkg.tar.zst"
+  package monarch-systemd-stub 262-1
+  stub_package="$tmp/packages/monarch-systemd-stub-262-1-any.pkg.tar.zst"
   pacman() {
     printf '%s\n' "$@" >>"$tmp/calls"
     if [[ " $* " == *' --print '* ]]; then
@@ -72,15 +74,15 @@ sed -n '/^source \/builder\/local-package-dependencies.sh/,/^mapfile -t required
       echo 'external-3-1-any.pkg.tar.zst'
     fi
   }
-  all_packages=(monarch monarch-settings local-api listed)
+  all_packages=(monarch monarch-settings monarch-systemd-stub local-api listed)
   offline_mirror_dir="$tmp/packages"
   source "$tmp/transaction.sh"
   [[ ${all_packages[*]} == 'external<4 external>=2 listed settings-only unversioned-api>=1' ]]
   [[ $(grep -cFx 'external>=2' "$tmp/calls") == 2 ]]
   [[ $(grep -cFx 'settings-only' "$tmp/calls") == 2 ]]
   [[ $(grep -cFx 'local-api=4' "$tmp/calls") == 2 ]]
-  [[ $(grep -cFx -- '--assume-installed' "$tmp/calls") == 8 ]]
-  ! grep -qxE 'monarch|monarch-settings|local-api' "$tmp/calls"
+  [[ $(grep -cFx -- '--assume-installed' "$tmp/calls") == 10 ]]
+  ! grep -qxE 'monarch|monarch-settings|monarch-systemd-stub|local-api' "$tmp/calls"
   fail_resolution=1
   if (source "$tmp/transaction.sh") >"$tmp/output" 2>"$tmp/error"; then
     exit 1

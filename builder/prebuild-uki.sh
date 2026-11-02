@@ -2,6 +2,10 @@
 set -euo pipefail
 
 root=$1
+[[ -s $root/usr/lib/monarch/boot/linuxx64.efi.stub ]] || {
+  echo "ERROR: Monarch EFI stub missing from target image" >&2
+  exit 1
+}
 cache="$root/var/lib/monarch-iso"
 mkdir -p "$cache"
 mapfile -t kernels < <(find "$root/usr/lib/modules" -mindepth 2 -maxdepth 2 -name pkgbase | sort)
@@ -72,6 +76,7 @@ python /configs/airootfs/usr/share/monarch-iso/orchestrator/prebuilt_uki.py "$ro
   >"$cache/prebuilt-uki.json"
 
 if ! arch-chroot "$root" mkinitcpio -k "/usr/lib/modules/$version/vmlinuz" \
+  --no-ukify --uefistub /usr/lib/monarch/boot/linuxx64.efi.stub \
   -c /var/lib/monarch-iso/mkinitcpio.conf -S autodetect --cmdline /var/lib/monarch-iso/cmdline \
   -U /var/lib/monarch-iso/prebuilt-uki.efi; then
   rm -f "$cache/prebuilt-uki.efi"

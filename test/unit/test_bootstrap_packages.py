@@ -28,6 +28,7 @@ class BootstrapPackagesTest(unittest.TestCase):
                     "efibootmgr",
                     "monarch-keyring",
                     "monarch",
+                    "monarch-systemd-stub",
                 ],
             )
             self.assertEqual(
