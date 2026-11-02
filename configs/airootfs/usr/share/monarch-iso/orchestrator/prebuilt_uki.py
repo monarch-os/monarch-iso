@@ -13,7 +13,8 @@ from pathlib import Path
 def fingerprint(root: Path) -> str:
     digest = hashlib.sha256()
     paths = [root / 'etc/mkinitcpio.conf', root / 'usr/lib/monarch/snapshot-overlay',
-             root / 'usr/lib/systemd/system/monarch-snapshot-overlay.service']
+             root / 'usr/lib/systemd/system/monarch-snapshot-overlay.service',
+             root / 'usr/lib/monarch/boot/linuxx64.efi.stub']
     for directory in ('etc/mkinitcpio.conf.d', 'etc/modprobe.d', 'usr/lib/modprobe.d',
                       'usr/lib/initcpio/install', 'usr/lib/initcpio/hooks'):
         paths.extend(sorted((root / directory).glob('*')))
