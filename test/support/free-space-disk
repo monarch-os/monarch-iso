@@ -1,0 +1,57 @@
+#!/bin/bash
+set -euo pipefail
+
+action=$1
+disk=$2
+evidence=$3
+mkdir -p "$evidence"
+work=$(mktemp -d "$evidence/.disk.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+case $action in
+  create)
+    [[ ! -e $disk ]] || { echo "Refusing to replace $disk" >&2; exit 1; }
+    truncate -s 40G "$work/disk.raw"
+    sgdisk -n 1:2048:1050623 -t 1:ef00 -c 1:FOREIGN_ESP \
+      -n 2:1050624:2099199 -t 2:0700 -c 2:EXISTING_DATA "$work/disk.raw" >/dev/null
+    for name in esp data; do
+      truncate -s 512M "$work/$name.img"
+      mkfs.fat -F32 "$work/$name.img" >/dev/null
+      printf 'Existing %s must survive the interactive free-space install.\n' "$name" >"$work/witness"
+      mcopy -i "$work/$name.img" "$work/witness" ::witness.txt
+    done
+    mmd -i "$work/esp.img" ::EFI ::EFI/Microsoft ::EFI/Microsoft/Boot
+    # Exercise Windows-ESP detection without pretending this fixture is Windows.
+    mcopy -i "$work/esp.img" "$work/witness" ::EFI/Microsoft/Boot/witness.txt
+    dd if="$work/esp.img" of="$work/disk.raw" bs=1M seek=1 conv=notrunc,sparse status=none
+    dd if="$work/data.img" of="$work/disk.raw" bs=1M seek=513 conv=notrunc,sparse status=none
+    for part in 1 2; do
+      sgdisk -i "$part" "$work/disk.raw" >"$evidence/partition-$part.before"
+    done
+    for name in esp data; do
+      sha256sum "$work/$name.img" | cut -d ' ' -f1 >"$evidence/$name.sha256"
+    done
+    qemu-img convert -f raw -O qcow2 "$work/disk.raw" "$disk"
+    ;;
+  verify)
+    status=0
+    qemu-img convert -f qcow2 -O raw "$disk" "$work/disk.raw"
+    for part in 1 2; do
+      sgdisk -i "$part" "$work/disk.raw" >"$evidence/partition-$part.after"
+      cmp "$evidence/partition-$part.before" "$evidence/partition-$part.after"
+    done
+    for entry in esp:1 data:513; do
+      name=${entry%:*}
+      offset=${entry#*:}
+      actual=$(dd if="$work/disk.raw" bs=1M skip="$offset" count=512 status=none | sha256sum | cut -d ' ' -f1)
+      [[ $actual == "$(cat "$evidence/$name.sha256")" ]] || {
+        echo "Existing $name partition changed" >&2
+        status=1
+        continue
+      }
+      echo "Unchanged $name partition: $actual"
+    done
+    exit "$status"
+    ;;
+  *) echo "Usage: $0 create|verify <qcow2> <evidence-directory>" >&2; exit 1 ;;
+esac
