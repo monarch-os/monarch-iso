@@ -457,6 +457,7 @@ Its main options are:
 | Option | Purpose |
 |---|---|
 | `--encrypt` | Exercise the encrypted interactive flow. |
+| `--free-space` | Drive the free-space wizard beside witness partitions; verify preservation and cold boot. |
 | `--provision` | Exercise deferred first-boot owner provisioning. |
 | `--reuse-base` | Reuse an already installed base image. |
 | `--install-only` | Stop after creating the installed base. |
@@ -465,6 +466,7 @@ Its main options are:
 | `--sync-all DIR` | Also copy and run its CLI and shell suites. |
 | `--port PORT` | SSH port; the VNC display is derived from it. |
 | `--memory MB` | Guest memory, default `8192`. |
+| `--cpus N` | Guest vCPU count, default host CPU count. |
 | `--timeout SECONDS` | Install timeout, default `2400`. |
 | `--keep-running` | Leave the acceptance VM running after the suite. |
 | `--no-preview` | Do not open captured screenshots. |
@@ -475,7 +477,19 @@ Stop a VM retained by `--keep-running` with:
 ./bin/monarch-iso-test-stop [--kill] [--port 2222]
 ```
 
-To exercise free-space installation beside Windows-like data, create a
+The automated free-space scenario creates its own sparse disk without host
+mounts or root access. It records the existing ESP/data partitions' GUIDs,
+boundaries and full SHA-256 hashes, then checks them after installation and
+again after a cold boot without the ISO. Its foreign ESP contains an
+`EFI/Microsoft` directory for detection, not a bootable Windows installation.
+It requires `sgdisk`, `mkfs.fat` and mtools in addition to the usual test tools.
+
+```bash
+./bin/monarch-iso-test release/monarch.iso --free-space --install-only --cpus 2 --memory 4096 --no-preview
+./bin/monarch-iso-test release/monarch.iso --free-space --encrypt --install-only --cpus 2 --memory 4096 --no-preview
+```
+
+For manual testing of free-space installation beside Windows-like data, create a
 synthetic disk containing a Windows ESP, a preservation marker, and at least
 64 GiB of free space:
 

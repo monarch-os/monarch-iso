@@ -14,6 +14,7 @@
 # Usage: monarch-iso-test [release/monarch.iso] [options]
 #
 #   --encrypt          Drive the encrypted install flow (default: unencrypted)
+#   --free-space       Install alongside existing witness partitions; verify preservation and cold boot
 #   --provision              Drive the deferred-provisioning install flow: no user during install, the
 #                      first boot runs monarch-provision-owner and creates it there
 #   --reuse-base       Skip the install phase if a base image already exists
@@ -27,6 +28,7 @@
 #   --port PORT        Host port forwarded to guest SSH (default 2222)
 #                      VNC follows it: 2222 -> :5/5905, 2223 -> :6/5906
 #   --memory MB        VM memory (default 8192)
+#   --cpus N           Guest vCPU count (default: host CPU count)
 #   --timeout SECS     Install timeout (default 2400)
 #   --keep-running     Leave the acceptance VM running after the suite finishes
 #   --no-preview       Do not open the collected screenshots in imv
@@ -39,9 +41,11 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 ISO=""
 SSH_PORT=2222
 MEMORY=8192
+CPUS=$(nproc)
 INSTALL_TIMEOUT=2400
 BOOT_TIMEOUT=600
 ENCRYPT=false
+FREE_SPACE=false
 PROVISION=false
 REUSE_BASE=false
 INSTALL_ONLY=false
@@ -58,6 +62,7 @@ GUEST_HOSTNAME="monarch-test"
 while (($#)); do
   case "$1" in
     --encrypt) ENCRYPT=true ;;
+    --free-space) FREE_SPACE=true ;;
     --provision) PROVISION=true ;;
     --reuse-base) REUSE_BASE=true ;;
     --install-only) INSTALL_ONLY=true ;;
@@ -68,12 +73,19 @@ while (($#)); do
     --sync-all) SYNC_DIR="$2"; SYNC_ALL=true; shift ;;
     --port) SSH_PORT="$2"; shift ;;
     --memory) MEMORY="$2"; shift ;;
+    --cpus) CPUS="$2"; shift ;;
     --timeout) INSTALL_TIMEOUT="$2"; shift ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
     *) ISO="$1" ;;
   esac
   shift
 done
+
+if $FREE_SPACE && $PROVISION; then
+  echo "--free-space cannot be combined with --provision" >&2
+  exit 1
+fi
+[[ $CPUS =~ ^[1-9][0-9]*$ ]] || { echo "--cpus must be a positive integer" >&2; exit 1; }
 
 if [[ -z $SYNC_DIR && -f ${MONARCH_PATH:-}/test/acceptance ]]; then
   SYNC_DIR="$MONARCH_PATH"
@@ -96,6 +108,7 @@ OVMF_VARS_TEMPLATE="/usr/share/edk2/x64/OVMF_VARS.4m.fd"
 
 BASE_NAME="$(basename "$ISO" .iso)"
 $ENCRYPT && BASE_NAME+="-encrypted"
+$FREE_SPACE && BASE_NAME+="-free-space"
 $PROVISION && BASE_NAME+="-provision"
 BASE_DIR="$REPO_DIR/test-runs/$BASE_NAME"
 RUN_DIR="$BASE_DIR/runs/$(date +%Y%m%d-%H%M%S)"
@@ -219,7 +232,7 @@ start_vm() {
 
   qemu-system-x86_64 \
     -cpu host -enable-kvm -machine q35,accel=kvm \
-    -smp "$(nproc)" \
+    -smp "$CPUS" \
     -m "$MEMORY" \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$BASE_OVMF" \
@@ -475,7 +488,22 @@ drive_configurator() {
   wait_for_screen "installation mode\|recovery possible" 60
   if ocr_screen | grep -qi "installation mode"; then
     capture_console "success-installer-11-install-mode"
-    press ret # "Full disk install" is preselected
+    if $FREE_SPACE; then
+      press down
+    fi
+    press ret
+  fi
+
+  if $FREE_SPACE; then
+    wait_for_screen "Confirm installing" 120
+    capture_console "success-installer-12-free-space-encrypted"
+    if ! $ENCRYPT; then
+      press ctrl-c
+      wait_for_screen "without encryption" 30
+      capture_console "success-installer-13-free-space-unencrypted"
+    fi
+    press ret
+    return 0
   fi
 
   wait_for_screen "recovery possible" 60
@@ -759,7 +787,11 @@ install_phase() {
   [[ -f $SSH_KEY ]] || ssh-keygen -t ed25519 -N "" -q -C "monarch-iso-test" -f "$SSH_KEY"
 
   rm -f "$BASE_DISK"
-  qemu-img create -f qcow2 "$BASE_DISK" 40G >/dev/null
+  if $FREE_SPACE; then
+    bash "$REPO_DIR/test/support/free-space-disk" create "$BASE_DISK" "$BASE_DIR/preservation"
+  else
+    qemu-img create -f qcow2 "$BASE_DISK" 40G >/dev/null
+  fi
   cp "$OVMF_VARS_TEMPLATE" "$BASE_OVMF"
 
   start_vm "$BASE_DISK" "$RUN_DIR/install-serial.log" \
@@ -833,6 +865,22 @@ install_phase() {
 
   log "Installed system is up. Saving base image."
   stop_vm
+  if $FREE_SPACE; then
+    bash "$REPO_DIR/test/support/free-space-disk" verify "$BASE_DISK" "$BASE_DIR/preservation" \
+      | tee "$RUN_DIR/preservation.log"
+    log "Cold-booting the free-space installation without the ISO"
+    start_vm "$BASE_DISK" "$RUN_DIR/cold-boot-serial.log"
+    if $ENCRYPT; then unlock_luks; fi
+    wait_for_ssh "$BOOT_TIMEOUT" "failure-free-space-cold-boot"
+    ssh_guest 'test "$(findmnt -n -o FSTYPE /)" = btrfs && timeout 120 systemctl is-system-running --wait' \
+      | tee "$RUN_DIR/cold-boot-state.log"
+    ssh_guest "echo $GUEST_PASSWORD | sudo -S cat /var/log/monarch-install.log" >"$RUN_DIR/install.log"
+    ssh_guest "echo $GUEST_PASSWORD | sudo -S efibootmgr -v" >"$RUN_DIR/efibootmgr.log"
+    capture_console "success-free-space-cold-boot"
+    stop_vm
+    bash "$REPO_DIR/test/support/free-space-disk" verify "$BASE_DISK" "$BASE_DIR/preservation" \
+      | tee "$RUN_DIR/preservation-after-boot.log"
+  fi
 }
 
 sync_monarch() {
