@@ -183,6 +183,10 @@ class BootValidationTest(unittest.TestCase):
         installer.add_additional_packages.side_effect = lambda packages: events.append(packages)
         installer.create_users.side_effect = lambda accounts: events.append(("users", accounts))
         with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(phases.arch, 'install_base_delta', create=True))
+            stack.enter_context(mock.patch.object(phases.arch, 'target_missing_packages', side_effect=lambda target, names: names, create=True))
+            stack.enter_context(mock.patch.object(phases.root_image, "install", side_effect=lambda ctx: events.append("image")))
+            stack.enter_context(mock.patch.object(phases.root_image, "initialize_keyring"))
             for name, result in (("is_pre_mount", True), ("open_installer", installer), ("sanity_check", None), ("root_user", None)):
                 stack.enter_context(mock.patch.object(phases.arch, name, return_value=result, create=True))
             for name in ("_mount_offline_package_cache", "_mask_mkinitcpio_pacman_hooks", "_unmask_mkinitcpio_pacman_hooks", "_unmount_offline_package_cache", "_configure_limine_boot", "_write_pre_mounted_fstab"):
@@ -193,7 +197,7 @@ class BootValidationTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(phases, "_install_early_packages", side_effect=lambda installer: events.append("early")))
             stack.enter_context(mock.patch.object(phases.arch, "install_applications", side_effect=lambda *args: events.append("applications"), create=True))
             phases.arch_install_system(self.ctx)
-        expected = [["linux-cachyos-headers"], "validated", "early", ["runtime-dkms"], ["tailscale"]]
+        expected = ["image", ["linux-cachyos-headers"], "validated", "early", ["runtime-dkms"], ["tailscale"]]
         if users:
             expected.append(("users", users))
             installer.create_users.assert_called_once_with(users)

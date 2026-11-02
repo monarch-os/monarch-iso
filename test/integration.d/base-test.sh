@@ -30,6 +30,7 @@ OVMF_CODE="/usr/share/edk2/x64/OVMF_CODE.4m.fd"
 OVMF_VARS_TEMPLATE="/usr/share/edk2/x64/OVMF_VARS.4m.fd"
 
 BASE_DIR="$ROOT/test-runs/$(basename "$ISO" .iso)-integration"
+[[ ${MONARCH_INTEGRATION_MINIMAL:-false} != true ]] || BASE_DIR+="-minimal"
 RUN_DIR="$BASE_DIR/runs/$(date +%Y%m%d-%H%M%S)-$SCENARIO"
 BASE_DISK="$BASE_DIR/base.qcow2"
 BASE_OVMF="$BASE_DIR/OVMF_VARS.4m.fd"
@@ -403,11 +404,13 @@ EOF
 }
 
 build_cidata() {
+  local options=()
+  [[ ${MONARCH_INTEGRATION_MINIMAL:-false} != true ]] || options+=(--no-preinstalls)
   "$ROOT/bin/monarch-iso-cidata" \
     --user "$GUEST_USER" --password "$GUEST_PASSWORD" --key "$SSH_KEY.pub" \
     --disk /dev/vda --size 40G --hostname "$GUEST_HOSTNAME" \
     --timezone UTC --keyboard us --full-name "Monarch Test" \
-    --email test@monarch.org --output "$CIDATA_IMG"
+    --email test@monarch.org --output "$CIDATA_IMG" "${options[@]}"
 }
 
 install_phase() {

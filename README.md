@@ -81,12 +81,46 @@ The ISO contains two offline caches:
 - `/var/cache/python/offline/` contains the Python packages required by the
   Monarch installer.
 
-At boot, the ISO checks SHA-256 hashes of the pacman mirror's packages and
-repository databases. Installation waits for that check before partitioning or
+The builder also prepares `monarch-root.img.zst`, a compressed Btrfs image of
+the common target packages. Installation writes it to the fresh root filesystem,
+assigns a new filesystem UUID and machine ID, restores the requested subvolume
+layout, then installs only missing packages. Optional preinstalled applications
+remain a separate selection. Each target initializes its own pacman keyring.
+The image and its size metadata live directly in the ISO9660 tree at
+`arch/x86_64/`, alongside `airootfs.sfs`, following Omarchy F1.
+
+The shipped mirror keeps only installable archives not already provided at the
+same version by the root image. Its repository databases remain complete for
+dependency resolution. Pruning happens in the live filesystem after pacstrap,
+so the build cache retains the packages needed to build subsequent ISOs.
+
+A prebuilt UKI is reused only on UEFI systems whose kernel, keyboard and boot
+configuration still match the image. Hardware changes, deferred provisioning
+keys and BIOS installs use the normal on-target boot-image build.
+Like Omarchy, the prebuilt UKI uses systemd and `sd-encrypt`, with an initrd
+service providing the writable overlay for read-only Btrfs snapshots. Target
+rebuilds use Monarch's normal busybox hooks. The installed command line carries
+both encryption spellings so either initramfs unlocks the same root.
+The generic image uses the US console keymap, archinstall's `default8x16`
+font and Monarch's hardware-independent function-key policy. The installation
+log records whether the UKI was reused or why it fell
+back, and `TIMING F1.*` entries separate image writing, UUID refresh, base
+configuration, runtime packages, keyring initialization and UKI finalization.
+
+At boot, the ISO checks SHA-256 hashes of the root image, its size metadata,
+the pacman mirror's packages and repository databases. Installation waits for that check before partitioning or
 formatting, including free-space installs. Missing or damaged files stop the
 install with a diagnostic; a slow or unreadable medium is bounded by a
 size-based timeout. This integrity check does not replace the ISO signature
 and does not include the separate Python cache.
+
+The F1 reference is Omarchy Quattro `0baef779ca6ded18235827382c1c765686ec9fe8`
+(following [upstream PR #216](https://github.com/omacom-io/omarchy-iso/pull/216)).
+The archinstall base-delta sequence, direct ISO image placement and systemd
+prebuilt UKI follow that implementation. Monarch retains its CachyOS package
+sources, selectable applications, protected-target contract and shared
+pre-format integrity gate. UKI reuse keeps the stricter boot-input fingerprint;
+image writing uses standard `zstd`/`dd` instead of the parallel C writer.
 
 ### Build options
 
@@ -392,7 +426,18 @@ throwaway overlays:
 ./test/integration release/monarch.iso
 ./test/integration release/monarch.iso factory-reset --reuse-base
 ./test/integration release/monarch.iso initramfs-rebuild --reuse-base --offline --no-preview
+./test/integration release/monarch.iso boot installed-system --minimal --offline --cpus 2 --memory 4096 --no-preview
+./test/integration release/monarch.iso f1-uki f1-snapshot f1-layouts --reuse-base --offline --cpus 2 --memory 4096 --no-preview
 ```
+
+The opt-in `f1-uki` scenario requires actual UKI reuse on the generic US install
+and a successful cold boot, and compares the installed image byte-for-byte
+outside its command-line section. `f1-snapshot` boots a read-only snapshot with
+the same UKI and verifies that its initrd supplies a writable overlay.
+`f1-layouts` deploys the ISO's real root image onto
+disposable Btrfs loop devices inside the guest, exercising the protected standard
+layout and a nested `/var/lib` layout. It tests deployment rather than the
+interactive free-space partitioning flow.
 
 The harness follows [Omarchy ISO's integration tests at `8b17699`](https://github.com/omacom/omarchy-iso/tree/8b17699997460b260e2320807602f50025cd3b4e/test).
 The `boot` scenario, install timing collection and SSH progress captures are

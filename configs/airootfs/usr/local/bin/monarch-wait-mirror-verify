@@ -3,6 +3,7 @@
 MIRROR_UNIT=monarch-mirror-verify.service
 MIRROR_SUMS=/usr/share/monarch-iso/offline-mirror.sha256
 MIRROR_TIMEOUT=/usr/share/monarch-iso/offline-mirror.timeout
+ROOT_IMAGE_PATH=/usr/share/monarch-iso/root-image.path
 
 verification_error() {
   printf '%s\n' "$@" >&2
@@ -17,6 +18,18 @@ wait_for_mirror() {
     verification_error "Offline mirror checksums are missing; refusing to modify the disk."
     return 1
   }
+  local image file
+  image=$(cat "$ROOT_IMAGE_PATH" 2>/dev/null) || image=""
+  [[ $image == /*/monarch-root.img.zst ]] || {
+    verification_error "Root image path metadata is missing or invalid."
+    return 1
+  }
+  for file in "$image" "$image.size"; do
+    awk -v path="$file" '$2 == path && length($1) == 64 && $1 !~ /[^[:xdigit:]]/ { found=1 } END { exit !found }' "$MIRROR_SUMS" || {
+      verification_error "Root image is not covered by the install medium checksums."
+      return 1
+    }
+  done
   limit=$(cat "$MIRROR_TIMEOUT" 2>/dev/null) || limit=""
   [[ $limit =~ ^[0-9]{1,8}$ ]] && (( 10#$limit >= 600 )) || {
     verification_error "Offline mirror timeout metadata is missing or invalid."

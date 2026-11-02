@@ -20,4 +20,9 @@ check "Monarch command routes are valid" ssh_guest 'monarch commands --check'
 check "SDDM starts successfully" ssh_guest 'timeout 120 bash -c "until systemctl is-active --quiet sddm; do sleep 2; done"'
 check "EFI boot files exist" ssh_sudo 'test -s /boot/EFI/BOOT/BOOTX64.EFI && test -s /boot/limine.conf'
 
+if [[ ${MONARCH_INTEGRATION_MINIMAL:-false} == true ]]; then
+  check "Minimal install excludes optional desktop applications" ssh_guest \
+    'packages=$(pacman -Qq) && ! grep -Exq "obsidian|signal-desktop|xournalpp" <<<"$packages"'
+fi
+
 finish

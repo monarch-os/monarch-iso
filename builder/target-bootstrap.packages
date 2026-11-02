@@ -9,6 +9,11 @@ sudo
 linux-firmware
 mkinitcpio
 linux-cachyos
+linux-cachyos-headers
+archlinux-keyring
+cachyos-keyring
+amd-ucode
+intel-ucode
 btrfs-progs
 zram-generator
 

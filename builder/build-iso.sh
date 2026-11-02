@@ -12,7 +12,7 @@ pacman-key --init
 # /configs/pacman-online.conf with SigLevel = Optional TrustAll.
 pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
 pacman-key --populate archlinux cachyos monarch
-pacman --config /configs/pacman-online.conf --noconfirm -Syu archiso git sudo base-devel jq grub python-pip
+pacman --config /configs/pacman-online.conf --noconfirm -Syu archiso git sudo base-devel jq grub python-pip btrfs-progs zstd
 
 # Setup build locations
 build_cache_dir="/var/cache"
@@ -214,8 +214,6 @@ printf '%s\n' "${required_package_files[@]}" |
 rm -f "$offline_mirror_dir"/offline.db* "$offline_mirror_dir"/offline.files*
 repo-add "$offline_mirror_dir/offline.db.tar.gz" "$offline_mirror_dir/"*.pkg.tar.zst
 
-bash /builder/mirror-checksums.sh "$offline_mirror_dir" "$build_cache_dir/airootfs"
-
 # mkarchiso and the offline pacman config address the mirror at this path.
 # Link it before resolving the dashboard counts so those counts use the final
 # pruned repository, including locally-built Monarch packages and their exact
@@ -268,6 +266,42 @@ mapfile -t minimal_target_packages < <(
 )
 expected_minimal_packages=$(resolve_expected_packages "${minimal_target_packages[@]}")
 printf '%s\n' "$expected_minimal_packages" >"$build_cache_dir/airootfs/usr/share/monarch-iso/expected-packages-minimal"
+
+# The common image must respect the wizard's option to omit preinstalled apps.
+iso_subdir="$(sed -n 's/^install_dir="\(.*\)"$/\1/p' "$build_cache_dir/profiledef.sh")/x86_64"
+[[ $iso_subdir == ?*/x86_64 ]] || { echo "Cannot determine root image ISO directory" >&2; exit 1; }
+root_image_dir="$build_cache_dir/work/iso/$iso_subdir"
+mkdir -p "$root_image_dir"
+rm -f "$offline_mirror_dir/monarch-root.img.zst"{,.size,.packages}
+bash /builder/build-root-image.sh "$build_cache_dir/pacman-offline.conf" \
+  "$root_image_dir/monarch-root.img.zst" \
+  "${minimal_target_packages[@]}"
+metadata="$build_cache_dir/airootfs/usr/share/monarch-iso"
+mv "$root_image_dir/monarch-root.img.zst.packages" "$metadata/root-image.packages"
+printf '/run/archiso/bootmnt/%s/monarch-root.img.zst\n' "$iso_subdir" >"$metadata/root-image.path"
+mapfile -t installable_packages < <(
+  {
+    printf '%s\n' "${target_packages[@]}"
+    grep -hv '^#\|^$' "$metadata/monarch-other.packages" /builder/archinstall.packages
+  } | sort -u
+)
+pacman --config "$build_cache_dir/pacman-offline.conf" \
+  --root "$expected_packages_root" --dbpath "$expected_packages_root/var/lib/pacman" \
+  --noconfirm -S --print --print-format '%f' "${installable_packages[@]}" \
+  > /tmp/monarch-installable-packages
+python /builder/select-shipped-mirror.py "$offline_mirror_dir" \
+  "$metadata/root-image.packages" /tmp/monarch-installable-packages \
+  >"$metadata/offline-mirror.shipped"
+# mkarchiso still needs the full mirror to pacstrap the live environment.
+cp /builder/prune-offline-mirror.sh "$build_cache_dir/airootfs/root/prune-offline-mirror.sh"
+cat >"$build_cache_dir/airootfs/root/customize_airootfs.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+bash /root/prune-offline-mirror.sh /var/cache/monarch/mirror/offline \
+  </usr/share/monarch-iso/offline-mirror.shipped
+rm /root/prune-offline-mirror.sh
+EOF
+bash /builder/mirror-checksums.sh "$offline_mirror_dir" "$build_cache_dir/airootfs" "$root_image_dir"
 
 # Copy the offline pacman.conf to the ISO's /etc directory so the live environment uses our
 # same config when booted.
