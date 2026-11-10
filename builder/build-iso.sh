@@ -4,12 +4,12 @@ set -e
 
 # Note that these are packages installed to the CachyOS container used to build the ISO.
 pacman-key --init
+bash /builder/bootstrap-monarch-keyring.sh
 
 # Install the keyrings for package verification during build.
 # core/extra/multilib are served from the Cachy mirrors as vanilla Arch
 # packages signed by Arch developer keys, so archlinux-keyring is required to
-# verify them at -Syw download time. The [monarch] repo is defined in
-# /configs/pacman-online.conf with SigLevel = Optional TrustAll.
+# verify them at -Syw download time.
 pacman --config /configs/pacman-online.conf --noconfirm -Sy archlinux-keyring cachyos-keyring monarch-keyring
 pacman-key --populate archlinux cachyos monarch
 pacman --config /configs/pacman-online.conf --noconfirm -Syu archiso git sudo base-devel jq grub python-pip btrfs-progs zstd
@@ -63,8 +63,9 @@ else
     "${MONARCH_INSTALLER_REPO:-https://github.com/monarch-os/monarch.git}" /monarch-source
   git clone --depth 1 --branch "${MONARCH_PKGS_REF:-main}" \
     "${MONARCH_PKGS_REPO:-https://github.com/monarch-os/monarch-pkgs.git}" /monarch-pkgs
-  export MONARCH_LOCAL_PKGVER
+  export MONARCH_LOCAL_PKGVER MONARCH_LOCAL_REVISION
   MONARCH_LOCAL_PKGVER=$(bash /builder/source-package-version.sh /monarch-source)
+  MONARCH_LOCAL_REVISION=$(git -C /monarch-source rev-parse --verify HEAD)
 fi
 bash /builder/build-monarch-package.sh "$offline_mirror_dir"
 
@@ -273,7 +274,8 @@ iso_subdir="$(sed -n 's/^install_dir="\(.*\)"$/\1/p' "$build_cache_dir/profilede
 root_image_dir="$build_cache_dir/work/iso/$iso_subdir"
 mkdir -p "$root_image_dir"
 rm -f "$offline_mirror_dir/monarch-root.img.zst"{,.size,.packages}
-bash /builder/build-root-image.sh "$build_cache_dir/pacman-offline.conf" \
+MONARCH_IMAGE_SYNC_DBS=/tmp/offlinedb/sync \
+  bash /builder/build-root-image.sh "$build_cache_dir/pacman-offline.conf" \
   "$root_image_dir/monarch-root.img.zst" \
   "${minimal_target_packages[@]}"
 metadata="$build_cache_dir/airootfs/usr/share/monarch-iso"

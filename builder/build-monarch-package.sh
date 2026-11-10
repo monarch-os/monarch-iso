@@ -4,8 +4,15 @@ set -e
 
 offline_mirror_dir="$1"
 [[ -n $offline_mirror_dir ]] || { echo "Usage: build-monarch-package.sh <offline-mirror-dir>" >&2; exit 1; }
+[[ ${MONARCH_LOCAL_PKGVER:-} =~ ^[0-9A-Za-z.+_]+$ ]] || {
+  echo "ERROR: MONARCH_LOCAL_PKGVER is required and must be a valid package version" >&2
+  exit 1
+}
+[[ ${MONARCH_LOCAL_REVISION:-} =~ ^([0-9a-fA-F]{40}|[0-9a-fA-F]{64})$ ]] || {
+  echo "ERROR: MONARCH_LOCAL_REVISION is required and must be a full Git revision" >&2
+  exit 1
+}
 [[ -d /monarch-source ]] || { echo "ERROR: /monarch-source not mounted" >&2; exit 1; }
-[[ -n ${MONARCH_LOCAL_PKGVER:-} ]] || { echo "ERROR: MONARCH_LOCAL_PKGVER is required" >&2; exit 1; }
 [[ -f /monarch-pkgs/pkgbuilds/monarch/PKGBUILD ]] || {
   echo "ERROR: /monarch-pkgs/pkgbuilds/monarch/PKGBUILD not found" >&2
   exit 1
@@ -31,6 +38,8 @@ pacman --config /configs/pacman-online.conf -Sy --noconfirm
 su builder -c "
   cd '$work_dir/monarch' &&
   PKGDEST='$work_dir' MONARCH_SRC='$local_source_dir' \
+    MONARCH_LOCAL_PKGVER='$MONARCH_LOCAL_PKGVER' \
+    MONARCH_LOCAL_REVISION='$MONARCH_LOCAL_REVISION' \
     makepkg --noconfirm --skippgpcheck --skipchecksums --nodeps -f
 "
 

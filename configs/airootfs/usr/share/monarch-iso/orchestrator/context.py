@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import stat
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -87,21 +89,16 @@ class InstallContext:
             _strip_account_fields(arch_configuration)
 
         state_dir = Path(os.environ.get("MONARCH_INSTALL_STATE_DIR", "/run/monarch-install"))
-        state_dir.mkdir(parents=True, exist_ok=True)
+        with _private_state_directory(state_dir) as state_fd:
+            if defer_provisioning:
+                # Archinstall may read either copy; both contain the temporary
+                # unlock secret until owner provisioning can retire it.
+                _inject_provisioning_encryption_password(arch_configuration, user_credentials)
+                creds_path = state_dir / "provisioning-user_credentials.json"
+                _write_private_json(state_fd, creds_path.name, user_credentials)
 
-        if defer_provisioning:
-            # Encrypted deferred-provisioning installs have no user password to protect LUKS
-            # with. Generate a throwaway passphrase (staged for first-boot
-            # re-key by the stage_provisioning_state phase) and hand it to archinstall
-            # through both places it may look: the disk_encryption block and
-            # the credentials file.
-            _inject_provisioning_encryption_password(arch_configuration, user_credentials)
-            creds_path = state_dir / "provisioning-user_credentials.json"
-            creds_path.write_text(json.dumps(user_credentials, indent=2) + "\n")
-            creds_path.chmod(0o600)
-
-        arch_config_path = state_dir / "archinstall-user_configuration.json"
-        arch_config_path.write_text(json.dumps(arch_configuration, indent=2) + "\n")
+            arch_config_path = state_dir / "archinstall-user_configuration.json"
+            _write_private_json(state_fd, arch_config_path.name, arch_configuration)
 
         ctx = cls(
             config_path=config_path,
@@ -147,6 +144,50 @@ class InstallContext:
     @property
     def include_preinstalls(self) -> bool:
         return self.monarch_install.get("include_preinstalls", True) is not False
+
+
+@contextmanager
+def _private_state_directory(path: Path):
+    if not path.is_absolute() or ".." in path.parts or path == Path("/"):
+        raise RuntimeError("Install state directory must be an absolute private path")
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for index, component in enumerate(path.parts[1:]):
+            try:
+                os.mkdir(component, mode=0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            info = os.fstat(fd)
+            final = index == len(path.parts) - 2
+            if info.st_uid not in (0, os.geteuid()):
+                raise RuntimeError("Install state directory has an untrusted owner")
+            if final:
+                if info.st_uid != os.geteuid():
+                    raise RuntimeError("Install state directory must belong to the installer")
+                os.fchmod(fd, 0o700)
+            elif info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX):
+                raise RuntimeError("Install state parent is writable by other users")
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _write_private_json(directory_fd: int, name: str, data: dict) -> None:
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+            raise RuntimeError("Install configuration must be a private regular file")
+        os.fchmod(fd, 0o600)
+        os.ftruncate(fd, 0)
+        with os.fdopen(fd, "w", closefd=False) as output:
+            json.dump(data, output, indent=2)
+            output.write("\n")
+    finally:
+        os.close(fd)
 
 
 def _strip_account_fields(arch_configuration: dict) -> None:

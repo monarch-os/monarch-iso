@@ -6,7 +6,7 @@ Concretely:
 
 - The build container is `cachyos/cachyos:latest` (Omarchy uses `archlinux/archlinux:latest`). Override the runtime with `BUILDER_CMD` (defaults to `docker`).
 - `configs/pacman-online.conf` puts `[cachyos]` **first** so its optimized (x86-64-v3/v4) packages win over `[core]`/`[extra]`. `core`, `extra` and `multilib` are served from CachyOS mirrors but are vanilla Arch packages signed by Arch developer keys — which is why `archlinux-keyring` is still required alongside `cachyos-keyring`.
-- Three keyrings must be initialized, in this order: `archlinux-keyring`, `cachyos-keyring`, `monarch-keyring`. The `[monarch]` repo (`pkgs.monarchlinux.com`) is `SigLevel = Optional TrustAll`.
+- Three keyrings must be initialized, in this order: `archlinux-keyring`, `cachyos-keyring`, `monarch-keyring`. Before acquiring `monarch-keyring`, `builder/bootstrap-monarch-keyring.sh` retrieves and checks the pinned primary fingerprint independently of the package repository. All online repositories require trusted package signatures; bootstrap failure stops the build.
 - The live ISO kernel is `linux-cachyos`, not Omarchy's `linux-t2`. Apple T2 support is handled on the installed system by `install/config/hardware/apple/fix-t2.sh` in the `monarch` repo, not by the ISO kernel.
 - The configurator writes CachyOS mirrors (`mirror.cachyos.org`, `cdn.cachyos.org`) into `user_configuration.json`, not Arch/Omarchy mirrors.
 

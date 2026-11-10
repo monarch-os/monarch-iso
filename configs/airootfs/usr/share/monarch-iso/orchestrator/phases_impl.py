@@ -415,8 +415,8 @@ def _register_limine_efi_entry(
         if num not in pre_state["entries"] and _limine_entry_matches(label, esp_guid, loader)
     }
     new_limine = _find_label_entries(new_entries, "Limine")
-    if not new_limine:
-        error("Warning: firmware did not retain this ESP's Limine entry. Boot routes will be checked before reboot.")
+    if len(new_limine) != 1:
+        error("Warning: firmware did not retain a unique entry for this ESP's Limine loader. Boot routes will be checked before reboot.")
         return
     limine_num = new_limine[0]
 
@@ -438,6 +438,27 @@ def _register_limine_efi_entry(
     )
     if ordered.returncode:
         error(f"Warning: firmware refused BootOrder: {ordered.stderr}. Select Limine in the firmware boot menu.")
+
+    previous_next = post_state.get("next")
+    next_boot = subprocess.run(
+        ["efibootmgr", "--bootnext", limine_num],
+        check=False, capture_output=True, text=True, errors="replace",
+    )
+    # A successful write owns the change even if readback subsequently fails.
+    if ctx is not None and not next_boot.returncode and previous_next != limine_num:
+        ctx.state["efi_boot_rollback"]["previous_next"] = previous_next
+    try:
+        retained_next = _read_efibootmgr().get("next")
+    except (subprocess.CalledProcessError, OSError) as exc:
+        error(f"Warning: cannot verify BootNext: {exc}. Select Limine in the firmware boot menu.")
+        return
+    if ctx is not None:
+        if retained_next == limine_num and previous_next != limine_num:
+            ctx.state["efi_boot_rollback"]["previous_next"] = previous_next
+        else:
+            ctx.state["efi_boot_rollback"].pop("previous_next", None)
+    if next_boot.returncode or retained_next != limine_num:
+        error(f"Warning: firmware refused BootNext: {next_boot.stderr}. Select Limine in the firmware boot menu.")
 
 
 def _install_limine_bios(ctx: InstallContext, boot_partition) -> None:
@@ -757,7 +778,7 @@ def verify_protected_mounts(ctx: InstallContext) -> None:
         esp_dev = storage["esp_device"]
         info(f"› remounting protected ESP {esp_dev} at {esp_mp}")
         esp_mp.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["mount", esp_dev, str(esp_mp)], check=True)
+        subprocess.run(["mount", "-t", "vfat", esp_dev, str(esp_mp)], check=True)
 
     info(f"› protected target verified: kernel={storage.get('kernel', 'linux')} esp={boot['esp_mount']}")
 
@@ -863,12 +884,14 @@ def _write_pre_mounted_limine_defaults(ctx: InstallContext) -> None:
 
 _BOOT_ENTRY_RE = re.compile(r"^Boot([0-9A-Fa-f]{4})\*?\s+(.*)$")
 _BOOT_ORDER_RE = re.compile(r"^BootOrder:\s*(.*)$")
+_BOOT_NEXT_RE = re.compile(r"^BootNext:\s*([0-9A-Fa-f]{4})\s*$")
 
 
 def _read_efibootmgr() -> dict:
     res = capture(["efibootmgr", "--verbose"], check=True)
     entries: dict[str, str] = {}
     order: list[str] = []
+    next_boot = None
     for line in res.stdout.splitlines():
         m = _BOOT_ENTRY_RE.match(line)
         if m:
@@ -877,7 +900,10 @@ def _read_efibootmgr() -> dict:
         m = _BOOT_ORDER_RE.match(line)
         if m:
             order = [n.strip().upper() for n in m.group(1).split(",") if n.strip()]
-    return {"entries": entries, "order": order, "raw": res.stdout}
+        m = _BOOT_NEXT_RE.match(line)
+        if m:
+            next_boot = m.group(1).upper()
+    return {"entries": entries, "order": order, "next": next_boot, "raw": res.stdout}
 
 
 def _find_label_entries(entries: dict[str, str], needle: str) -> list[str]:
@@ -1734,39 +1760,36 @@ def _validate_kernel_headers(ctx: InstallContext) -> None:
 
 def _validate_encrypted_uki(uki: Path) -> None:
     try:
-        config = subprocess.run(
-            ["lsinitcpio", "-c", str(uki)],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
         archive = subprocess.run(
             ["lsinitcpio", str(uki)],
             check=True,
             capture_output=True,
             text=True,
         ).stdout
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        detail = (getattr(exc, "stderr", None) or getattr(exc, "stdout", None) or str(exc)).strip()
         raise RuntimeError(f"Could not inspect encrypted UKI {uki}: {detail}") from exc
 
-    _assert_encrypted_uki_contents(str(uki), config, archive)
+    _assert_encrypted_uki_contents(str(uki), archive)
 
 
-def _assert_encrypted_uki_contents(uki: str, config: str, archive: str) -> None:
-    files = set(archive.splitlines())
-    hooks_match = re.search(r'HOOKS=\((.*?)\)', config, re.DOTALL)
-    hooks = {word.strip('\"\'') for word in hooks_match[1].split()} if hooks_match else set()
-    busybox = 'encrypt' in hooks and 'usr/bin/cryptsetup' in files
-    systemd = 'sd-encrypt' in hooks and {
+def _assert_encrypted_uki_contents(uki: str, archive: str) -> None:
+    # buildconfig contains unevaluated examples and overrides, not runtime hooks.
+    files = {re.sub(r'^(?:\./)+', '', path) for path in archive.splitlines()}
+    busybox = {'hooks/encrypt', 'usr/bin/cryptsetup'} <= files
+    systemd = {
+        'init',
+        'usr/lib/systemd/systemd',
+        'usr/lib/systemd/system/initrd.target',
+        'usr/lib/systemd/system/cryptsetup.target',
         'usr/lib/systemd/systemd-cryptsetup',
         'usr/lib/systemd/system-generators/systemd-cryptsetup-generator',
     } <= files
     if not (busybox or systemd):
         raise RuntimeError(
             f"{uki} cannot unlock an encrypted root: "
-            "its initramfs must contain encrypt with cryptsetup, or sd-encrypt "
-            "with systemd-cryptsetup and its generator"
+            "its initramfs must contain hooks/encrypt with cryptsetup, or the systemd "
+            "initrd with cryptsetup.target, systemd-cryptsetup and its generator"
         )
 
 
@@ -2036,6 +2059,25 @@ def _rollback_protected_efi_entry(ctx: InstallContext) -> None:
         r"[0-9A-Fa-f]{4}", created_entry
     ):
         return
+
+    if "previous_next" in rollback:
+        previous_next = rollback["previous_next"]
+        try:
+            current_next = _read_efibootmgr().get("next")
+        except (subprocess.CalledProcessError, OSError) as exc:
+            error(f"Warning: cannot read BootNext during rollback: {exc}")
+        else:
+            if current_next == created_entry:
+                if previous_next is None:
+                    command = ["efibootmgr", "--delete-bootnext"]
+                elif isinstance(previous_next, str) and re.fullmatch(r"[0-9A-Fa-f]{4}", previous_next):
+                    command = ["efibootmgr", "--bootnext", previous_next]
+                else:
+                    command = None
+                if command:
+                    restored = subprocess.run(command, check=False, capture_output=True)
+                    if restored.returncode:
+                        error("Warning: firmware refused to restore BootNext during rollback.")
 
     subprocess.run(
         ["efibootmgr", "--bootnum", created_entry, "--delete-bootnum"],

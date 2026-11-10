@@ -107,9 +107,9 @@ class BootValidationTest(unittest.TestCase):
 
     def test_bootorder_failure_keeps_rollback_and_entry(self):
         pre = {"entries": {"0001": "Windows"}, "order": ["0001"]}
-        with mock.patch.object(phases.subprocess, "run", side_effect=[CompletedProcess([], 0, stderr=""), CompletedProcess([], 1, stderr="refused")]) as run:
+        with mock.patch.object(phases.subprocess, "run", side_effect=[CompletedProcess([], 0, stderr=""), CompletedProcess([], 1, stderr="refused"), CompletedProcess([], 1, stderr="refused")]) as run:
             phases._register_limine_efi_entry(Path("/dev/sda"), 1, LOADER, ctx=self.ctx, esp_guid=GUID, pre_state=pre)
-        self.assertEqual(run.call_args_list[-1].args[0], ["efibootmgr", "--bootorder", "0003,0001"])
+        self.assertEqual(run.call_args_list[1].args[0], ["efibootmgr", "--bootorder", "0003,0001"])
         self.assertEqual(self.ctx.state["efi_boot_rollback"], {"created_entry": "0003", "previous_order": ["0001"]})
         phases._validate_uefi_boot_routes(self.ctx, self.esp, self.binary)
 
@@ -143,9 +143,13 @@ class BootValidationTest(unittest.TestCase):
 
     def test_install_preserves_foreign_fallback(self):
         fallback = self.write("boot/EFI/BOOT/BOOTX64.EFI", "windows")
+        foreign_uki = self.write("boot/EFI/Linux/foreign.efi", "foreign UKI")
+        windows = self.write("boot/EFI/Microsoft/Boot/bootmgfw.efi", "Windows loader")
         with mock.patch.object(phases, "_register_limine_efi_entry"):
             phases._install_limine_efi(self.ctx, esp_mount="/boot", disk=Path("/dev/sda"), part=1)
         self.assertEqual(fallback.read_text(), "windows")
+        self.assertEqual(foreign_uki.read_text(), "foreign UKI")
+        self.assertEqual(windows.read_text(), "Windows loader")
 
     def test_install_deploys_fallback_before_nvram_write(self):
         def register(*args, **kwargs):
