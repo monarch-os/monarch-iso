@@ -81,11 +81,23 @@ The ISO contains two offline caches:
 - `/var/cache/python/offline/` contains the Python packages required by the
   Monarch installer.
 
+Online package acquisition requires trusted signatures, including Monarch packages. Before downloading `monarch-keyring`, the builder retrieves the pinned Monarch primary key independently of the package repository and checks its full fingerprint. Retrieval, fingerprint or signature failures stop construction. Offline packages are the already-verified remote archives plus the explicitly selected local Monarch build; offline mirror checksums detect later media damage, not an independent signing authority.
+
 The builder also prepares `monarch-root.img.zst`, a compressed Btrfs image of
 the common target packages. Installation writes it to the fresh root filesystem,
 assigns a new filesystem UUID and machine ID, restores the requested subvolume
 layout, then installs only missing packages. Optional preinstalled applications
 remain a separate selection. Each target initializes its own pacman keyring.
+The image also keeps the build's exact online sync databases, with their mtimes,
+alongside `offline.db`. `MONARCH_IMAGE_SYNC_DBS` passes the resolution sync
+directory to the image builder; no synchronization is added at first boot.
+All repositories declared by the runtime's `default/pacman/pacman.conf` are
+required, including CachyOS and Monarch. Absolute `Include` paths and globs
+resolve inside the image (missing files, escaping paths and cycles fail the build).
+Literal repositories in `install/hardware/pacman.sh` are included only when
+their database exists in that build. Unreferenced build-only databases stay out.
+Old indexes cannot guarantee that mirrors still serve their package versions;
+use a full system update in that case, not a partial database refresh.
 The image and its size metadata live directly in the ISO9660 tree at
 `arch/x86_64/`, alongside `airootfs.sfs`, following Omarchy F1.
 
@@ -348,6 +360,8 @@ interactive configurator. Prefer the helper over maintaining JSON templates by
 hand, because the archinstall schema and Monarch metadata evolve together.
 
 ### Secrets and lifecycle
+
+The orchestrator's effective configuration can also contain the LUKS passphrase. Its live state directory is private (0700), and both generated configuration/credential copies are 0600 from their first open, regardless of the caller's umask. Existing symlinks, non-regular files, hardlinks and untrusted directory ownership are rejected instead of redirecting sensitive writes. These private copies live under `/run/monarch-install` until the live session ends; this is not a promise of forensic erasure or cleanup of archinstall's own logs.
 
 Treat every generated cidata image as sensitive. Password hashes are included,
 an encrypted direct-user install contains its LUKS password in plaintext, and a

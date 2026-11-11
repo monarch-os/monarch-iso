@@ -5,6 +5,7 @@ config=$1
 output=$2
 shift 2
 (( $# > 0 )) || { echo "Root image package list is empty" >&2; exit 1; }
+[[ -n ${MONARCH_IMAGE_SYNC_DBS:-} ]] || { echo "Root image requires the build's online sync directory" >&2; exit 1; }
 
 work=$(mktemp -d /var/cache/monarch-root-image.XXXXXX)
 mountpoint="$work/mount"
@@ -62,6 +63,7 @@ rm -rf "$root/etc/pacman.d/gnupg"
 rm -f "$root/var/lib/dbus/machine-id" "$root/etc/ssh/ssh_host_"* "$root/var/lib/systemd/random-seed"
 rm -rf "$root/var/cache/pacman/pkg/"* "$root/etc/resolv.conf"
 find "$root/var/log" -mindepth 1 ! -name pacman.log -delete
+python /builder/ship-sync-databases.py "$root" "$MONARCH_IMAGE_SYNC_DBS"
 
 # This keyboard policy applies to every install, independently of its hardware.
 arch-chroot "$root" bash /usr/share/monarch/install/hardware/fix-fkeys.sh

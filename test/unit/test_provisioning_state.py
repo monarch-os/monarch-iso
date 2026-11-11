@@ -137,6 +137,44 @@ class ContextDeferProvisioningTest(unittest.TestCase):
             "rig-secret",
         )
 
+    def test_sensitive_state_is_private_even_under_permissive_umask(self):
+        self.write_config(self.base_config(defer_provisioning=True, disk_encryption={
+            "encryption_type": "luks", "partitions": ["x"],
+        }))
+        previous = os.umask(0o022)
+        try:
+            ctx = self.from_env()
+        finally:
+            os.umask(previous)
+        self.assertEqual(self.state_dir.stat().st_mode & 0o777, 0o700)
+        for path in (ctx.arch_config_path, ctx.creds_path):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_sensitive_state_does_not_follow_directory_symlinks(self):
+        self.write_config(self.base_config(defer_provisioning=True))
+        victim = self.dir / "victim"
+        victim.mkdir()
+        self.state_dir.symlink_to(victim, target_is_directory=True)
+        with self.assertRaises((OSError, RuntimeError)):
+            self.from_env()
+        self.assertEqual(list(victim.iterdir()), [])
+
+    def test_sensitive_state_rejects_symlinks_and_hardlinks(self):
+        self.write_config(self.base_config(defer_provisioning=True))
+        self.state_dir.mkdir(mode=0o700)
+        victim = self.dir / "victim"
+        victim.write_text("untouched")
+        destination = self.state_dir / "archinstall-user_configuration.json"
+        for link in (lambda: destination.symlink_to(victim), lambda: os.link(victim, destination)):
+            with self.subTest(link=link):
+                link()
+                try:
+                    with self.assertRaises((OSError, RuntimeError)):
+                        self.from_env()
+                    self.assertEqual(victim.read_text(), "untouched")
+                finally:
+                    destination.unlink()
+
     def test_deferred_provisioning_discards_account_material(self):
         # A rig credentials file must not smuggle in users or a root password.
         self.write_config(self.base_config(defer_provisioning=True))

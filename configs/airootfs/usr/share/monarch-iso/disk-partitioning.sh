@@ -131,7 +131,8 @@ create_partition() {
   # Check the reads themselves, not a pipeline's final sort status.
   before=$(partition_numbers "$disk") || return 1
 
-  parted --script "$disk" mkpart primary "$fstype" "${start}B" "${end}B" || return 1
+  # The layout's end is exclusive; parted expects the last byte included.
+  parted --script "$disk" mkpart primary "$fstype" "${start}B" "$((end - 1))B" || return 1
   partprobe "$disk" 2>/dev/null || true
   udevadm settle 2>/dev/null || true
 

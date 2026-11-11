@@ -41,20 +41,6 @@ check() {
   fi
 }
 
-# parted reports a partition's size inclusive of both endpoints, so it lands
-# one sector above (end - start). Same slack create_partition allows.
-check_size() {
-  local label="$1" want="$2" actual="${3:-0}" delta
-  delta=$((actual - want))
-  (( delta < 0 )) && delta=$((-delta))
-  if (( delta <= MIB )); then
-    printf '  ok   %s\n' "$label"
-  else
-    printf '  FAIL %s: expected ~%s, got %s\n' "$label" "$want" "$actual"
-    failures=$((failures + 1))
-  fi
-}
-
 # parted's end position is inclusive, so partitions laid back to back overlap
 # by a sector and are refused. Leave a MiB between them.
 mkpart_mib() {
@@ -80,6 +66,14 @@ build_holey_disk() {
 echo "==> numbering on a disk with holes"
 build_holey_disk
 check "existing numbers" "1 4" "$(partition_numbers "$IMG" | sort | tr '\n' ' ' | sed 's/ $//')"
+# Witness bytes model Windows/foreign UKI data on the two protected partitions.
+printf 'Windows EFI witness' | dd of="$IMG" bs=1 seek="$((2 * MIB))" conv=notrunc status=none
+printf 'foreign UKI witness' | dd of="$IMG" bs=1 seek="$((602 * MIB))" conv=notrunc status=none
+protected_bytes() {
+  dd if="$IMG" bs=1M skip=1 count=199 status=none | sha256sum
+  dd if="$IMG" bs=1M skip=601 count=199 status=none | sha256sum
+}
+protected_before=$(protected_bytes)
 
 create_partition "$IMG" "$((1000 * MIB))" "$((1200 * MIB))" fat32 MONARCH_EFI
 check "create_partition succeeded (esp)" "0" "$?"
@@ -99,13 +93,17 @@ check "esp is not the predicted number" "not-5" "$([[ $esp_num == 5 ]] && echo 5
 check "root is not the predicted number" "not-6" "$([[ $root_num == 6 ]] && echo 6 || echo not-6)"
 
 check "both creations tracked for rollback" "2 3" "${created_parts[*]}"
-check_size "esp size" "$((200 * MIB))" "$(partition_size_bytes "$IMG" "$esp_num")"
-check_size "root size" "$((799 * MIB))" "$(partition_size_bytes "$IMG" "$root_num")"
+check "esp exact size" "$((200 * MIB))" "$(partition_size_bytes "$IMG" "$esp_num")"
+check "root exact size" "$((799 * MIB))" "$(partition_size_bytes "$IMG" "$root_num")"
+check "esp size aligned to 4096" "0" "$(( $(partition_size_bytes "$IMG" "$esp_num") % 4096 ))"
+check "root size aligned to 4096" "0" "$(( $(partition_size_bytes "$IMG" "$root_num") % 4096 ))"
+check "protected bytes unchanged by creation" "$protected_before" "$(protected_bytes)"
 
 echo "==> rollback reclaims only what this run created"
 rollback_created_parts "$IMG"
 check "created partitions removed" "1 4" "$(partition_numbers "$IMG" | sort | tr '\n' ' ' | sed 's/ $//')"
 check "rollback list cleared" "0" "${#created_parts[@]}"
+check "protected bytes unchanged by rollback" "$protected_before" "$(protected_bytes)"
 
 echo "==> numbering on a disk without holes"
 rm -f "$IMG"
