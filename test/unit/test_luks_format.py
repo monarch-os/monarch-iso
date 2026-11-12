@@ -90,6 +90,27 @@ class LuksFormatTest(unittest.TestCase):
                 subprocess.run(['cryptsetup', 'open', '--test-passphrase', device],
                                input=b'test-only-passphrase', check=True, capture_output=True)
 
+    def test_boot_verifier_resolves_btrfs_subvolume_source(self):
+        source = (SOURCE.parents[4] / 'bin/monarch-iso-test').read_text()
+        function = source[source.index('verify_luks_sector_size() {'):source.index('\ninstall_phase() {')]
+        script = r'''
+set -euo pipefail
+GUEST_PASSWORD=fixture
+RUN_DIR=$1
+sudo() { read -r password; shift 3; "$@"; }
+findmnt() { [[ $* == '-nro SOURCE /' ]]; echo '/dev/mapper/root[/@]'; }
+lsblk() {
+  [[ $* == '-snrpo NAME,FSTYPE /dev/mapper/root' ]] || return 1
+  printf '/dev/mapper/root btrfs\n/dev/vda2 crypto_LUKS\n/dev/vda\n'
+}
+cryptsetup() { [[ $* == 'luksDump /dev/vda2' ]]; echo 'sector: 4096'; }
+export -f sudo findmnt lsblk cryptsetup
+ssh_guest() { bash -eu -c "$1"; }
+log() { :; }
+'''
+        subprocess.run(['bash', '-c', script + function + '\nverify_luks_sector_size',
+                        'test', str(self.root)], check=True)
+
 
 if __name__ == '__main__':
     unittest.main()

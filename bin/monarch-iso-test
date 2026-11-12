@@ -785,8 +785,9 @@ verify_luks_sector_size() {
   local report="$RUN_DIR/luks-sector-size.txt" sector
   ssh_guest "echo $GUEST_PASSWORD | sudo -S -p '' bash -c '
     set -euo pipefail
-    root=\$(findmnt -nro MAJ:MIN /)
-    mapfile -t devices < <(lsblk -snrpo NAME,FSTYPE /dev/block/\$root | awk '\''\$2 == \"crypto_LUKS\" {print \$1}'\'')
+    root=\$(findmnt -nro SOURCE /)
+    root=\${root%%\\[*}
+    mapfile -t devices < <(lsblk -snrpo NAME,FSTYPE \"\$root\" | awk '\''\$2 == \"crypto_LUKS\" {print \$1}'\'')
     (( \${#devices[@]} == 1 ))
     cryptsetup luksDump \"\${devices[0]}\"
   '" >"$report" 2>&1 || return 1
