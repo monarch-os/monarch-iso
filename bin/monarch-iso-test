@@ -781,6 +781,24 @@ establish_session() {
 
 # -------------------------------------------------------------------- phases
 
+verify_luks_sector_size() {
+  local report="$RUN_DIR/luks-sector-size.txt" sector
+  ssh_guest "echo $GUEST_PASSWORD | sudo -S -p '' bash -c '
+    set -euo pipefail
+    root=\$(findmnt -nro SOURCE /)
+    root=\${root%%\\[*}
+    mapfile -t devices < <(lsblk -snrpo NAME,FSTYPE \"\$root\" | awk '\''\$2 == \"crypto_LUKS\" {print \$1}'\'')
+    (( \${#devices[@]} == 1 ))
+    cryptsetup luksDump \"\${devices[0]}\"
+  '" >"$report" 2>&1 || return 1
+  sector=$(awk '$1 == "sector:" {print $2; exit}' "$report")
+  if [[ $sector != 4096 ]]; then
+    echo "Expected 4096-byte root LUKS sectors, got ${sector:-unknown}; see $report" >&2
+    return 1
+  fi
+  log "Root LUKS uses 4096-byte sectors"
+}
+
 install_phase() {
   log "Installing $(basename "$ISO") into a fresh VM (headless, driven via console)"
 
@@ -807,6 +825,7 @@ install_phase() {
     unlock_luks
   fi
   bootstrap_ssh
+  if $ENCRYPT; then verify_luks_sector_size; fi
 
   # SSH can come up (console bootstrap logs in on a spare TTY) while
   # monarch-provision-owner is still finalizing the user and re-keying LUKS. Saving

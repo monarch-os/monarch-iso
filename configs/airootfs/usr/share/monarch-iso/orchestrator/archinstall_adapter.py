@@ -55,6 +55,7 @@ from archinstall.lib.models.users import User
 from archinstall.lib.pacman.config import PacmanConfig
 
 from .ui import info
+from .luks_format import format_command
 
 
 def target_missing_packages(target: Path, names: list[str]) -> list[str]:
@@ -178,12 +179,29 @@ def perform_filesystem_operations(arch_config: ArchConfig) -> None:
     for attempt in range(1, attempts + 1):
         udev_sync()
         try:
-            handler.perform_filesystem_operations(**fs_kwargs)
+            with _luks_format_policy():
+                handler.perform_filesystem_operations(**fs_kwargs)
             return
         except Exception as exc:
             if attempt == attempts or "unable to inform the kernel" not in str(exc):
                 raise
             info(f"› partition commit lost a udev race (attempt {attempt}/{attempts}); retrying")
+
+
+@contextmanager
+def _luks_format_policy():
+    # archinstall 4.5 exposes no sector-size argument on Luks2.encrypt.
+    luks = importlib.import_module('archinstall.lib.disk.luks')
+    original_run = luks.run
+
+    def run(command, *args, **kwargs):
+        return original_run(format_command(command), *args, **kwargs)
+
+    luks.run = run
+    try:
+        yield
+    finally:
+        luks.run = original_run
 
 
 @contextmanager
