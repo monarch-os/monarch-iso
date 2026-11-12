@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+umask 0022
 
 # Note that these are packages installed to the CachyOS container used to build the ISO.
 pacman-key --init
