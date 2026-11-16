@@ -109,6 +109,9 @@ assert "the root partition is encrypted" \
 assert "the passphrase reaches the credentials" \
   jq_e '.encryption_password == "hunter2"' "$work/encrypted/user_credentials.json"
 
+assert "encrypted config uses upstream's 2-second calibration policy" \
+  jq_e '.disk_config.disk_encryption.iter_time == 2000' "$work/encrypted/user_configuration.json"
+
 echo "an unencrypted install writes valid archinstall inputs"
 generate plain false
 assert "user_configuration.json is valid JSON" jq empty "$work/plain/user_configuration.json"

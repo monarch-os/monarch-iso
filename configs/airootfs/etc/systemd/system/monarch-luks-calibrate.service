@@ -1,0 +1,20 @@
+[Unit]
+Description=Calibrate LUKS Argon2id while the installer wizard is open
+After=monarch-mirror-verify.service monarch-root-image-verify.service
+ConditionPathExists=/run/archiso/bootmnt
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/monarch-luks-calibrate calibrate
+RuntimeDirectory=monarch-luks-calibration
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+TimeoutStopSec=2
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -78,6 +78,7 @@ write_full_disk_install_config() {
     disk_encryption_config=$(cat <<-_EOF_
 ,
         "disk_encryption": {
+            "iter_time": 2000,
             "encryption_type": "luks",
             "lvm_volumes": [],
             "iter_time": 2000,

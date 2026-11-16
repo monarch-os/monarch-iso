@@ -10,7 +10,7 @@ from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[2] / 'configs/airootfs/usr/share/monarch-iso'
 sys.path.insert(0, str(SOURCE))
-from orchestrator import luks_format
+from orchestrator import luks_calibration as luks_format
 from test.unit.test_installer_sanity_check import load_adapter
 
 
@@ -30,12 +30,14 @@ class LuksFormatTest(unittest.TestCase):
     def test_aligned_and_partial_sector_devices(self):
         for size, sector in ((64 * 1024 * 1024, '4096'), (64 * 1024 * 1024 + 512, '512')):
             command = self.command(self.device(size))
-            self.assertEqual(luks_format.format_command(command), command + ['--sector-size', sector])
+            expected = command + ['--sector-size', sector] if sector == '4096' else command
+            self.assertEqual(luks_format.format_command(command), expected)
 
-    def test_probe_failures_stop_before_formatting(self):
+    def test_probe_failures_leave_cryptsetup_defaults(self):
         for device in (str(self.root / 'missing'), self.device(0), self.device(513)):
-            with self.subTest(device=device), self.assertRaises((OSError, ValueError)):
-                luks_format.format_command(self.command(device))
+            with self.subTest(device=device):
+                command = self.command(device)
+                self.assertEqual(luks_format.format_command(command), command)
 
     def test_existing_volumes_and_explicit_policies_are_untouched(self):
         commands = [
@@ -51,31 +53,42 @@ class LuksFormatTest(unittest.TestCase):
 
     def test_free_space_entrypoint_preserves_stdin_key(self):
         device = self.device(64 * 1024 * 1024)
-        with mock.patch.object(sys, 'argv', ['luks_format.py', device]), \
+        with mock.patch.object(sys, 'argv', ['monarch-luks-calibrate', 'format', device]), \
+                mock.patch.object(luks_format, 'stop_calibration'), \
                 mock.patch.object(luks_format.os, 'execvp') as execute:
             luks_format.main()
         self.assertEqual(execute.call_args.args, ('cryptsetup', [
             'cryptsetup', 'luksFormat', device, '--sector-size', '4096',
-            '--type', 'luks2', '--batch-mode', '-',
+            '--type', 'luks2', '--batch-mode', '--pbkdf', 'argon2id',
+            '--key-size', '512', '--iter-time', '2000', '-',
         ]))
 
     def test_full_disk_policy_preserves_secrets_and_restores_runner_on_failure(self):
         adapter = load_adapter()
         runner = mock.Mock(side_effect=RuntimeError('format failed'))
-        luks = types.SimpleNamespace(run=runner)
         command = self.command(self.device(64 * 1024 * 1024))
 
+        class Luks2:
+            def encrypt(self):
+                luks.run(command, input_data=b'test-only-passphrase')
+
+        original_encrypt = Luks2.encrypt
+        luks = types.SimpleNamespace(run=runner, Luks2=Luks2)
+
         def filesystem_operations():
-            luks.run(command, input_data=b'test-only-passphrase')
+            Luks2().encrypt()
 
         handler = types.SimpleNamespace(perform_filesystem_operations=filesystem_operations)
         with mock.patch.dict(sys.modules, {'archinstall.lib.disk.luks': luks}), \
                 mock.patch.object(adapter, 'FilesystemHandler', return_value=handler), \
                 mock.patch.object(adapter, 'udev_sync'), \
+                mock.patch.object(adapter, 'stop_calibration') as stop, \
                 self.assertRaisesRegex(RuntimeError, 'format failed'):
             adapter.perform_filesystem_operations(types.SimpleNamespace(disk_config=object()))
         runner.assert_called_once_with(command + ['--sector-size', '4096'], input_data=b'test-only-passphrase')
         self.assertIs(luks.run, runner)
+        self.assertIs(Luks2.encrypt, original_encrypt)
+        stop.assert_called_once()
 
     @unittest.skipUnless(shutil.which('cryptsetup'), 'cryptsetup unavailable')
     def test_real_luks_headers_and_passwords_for_both_sector_sizes(self):

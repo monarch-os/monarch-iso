@@ -1,0 +1,4 @@
+#!/bin/bash
+set -euo pipefail
+cd /usr/share/monarch-iso
+exec python -m orchestrator.luks_calibration "$@"

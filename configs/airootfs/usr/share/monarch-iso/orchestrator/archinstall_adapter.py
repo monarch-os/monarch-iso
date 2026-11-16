@@ -55,7 +55,7 @@ from archinstall.lib.models.users import User
 from archinstall.lib.pacman.config import PacmanConfig
 
 from .ui import info
-from .luks_format import format_command
+from .luks_calibration import format_command, stop_calibration
 
 
 def target_missing_packages(target: Path, names: list[str]) -> list[str]:
@@ -192,16 +192,29 @@ def perform_filesystem_operations(arch_config: ArchConfig) -> None:
 def _luks_format_policy():
     # archinstall 4.5 exposes no sector-size argument on Luks2.encrypt.
     luks = importlib.import_module('archinstall.lib.disk.luks')
-    original_run = luks.run
-
-    def run(command, *args, **kwargs):
-        return original_run(format_command(command), *args, **kwargs)
-
-    luks.run = run
+    original_encrypt = luks.Luks2.encrypt
+    luks.Luks2.encrypt = _with_calibration(original_encrypt)
     try:
         yield
     finally:
-        luks.run = original_run
+        luks.Luks2.encrypt = original_encrypt
+
+
+def _with_calibration(original_encrypt):
+    def encrypt(self, *args, **kwargs):
+        luks = importlib.import_module('archinstall.lib.disk.luks')
+        stop_calibration()
+        original_run = luks.run
+
+        def calibrated_run(command, *run_args, **run_kwargs):
+            return original_run(format_command(command), *run_args, **run_kwargs)
+
+        luks.run = calibrated_run
+        try:
+            return original_encrypt(self, *args, **kwargs)
+        finally:
+            luks.run = original_run
+    return encrypt
 
 
 @contextmanager
