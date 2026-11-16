@@ -1,7 +1,7 @@
 """Thin compatibility wall around the archinstall Python library.
 
-ONLY this module imports from archinstall. Everything else uses these helpers.
-If archinstall's API churns, the blast radius is contained here.
+This adapter and its upstream luks_tuning companion import archinstall.
+Other orchestrator modules use these helpers.
 
 Targets archinstall 4.5 (Python 3.14).
 
@@ -55,7 +55,6 @@ from archinstall.lib.models.users import User
 from archinstall.lib.pacman.config import PacmanConfig
 
 from .ui import info
-from .luks_calibration import format_command, stop_calibration
 
 
 def target_missing_packages(target: Path, names: list[str]) -> list[str]:
@@ -130,6 +129,8 @@ def load_arch_config(config_path: Path, creds_path: Path) -> ArchConfigHandler:
     archinstall a synthetic argv just for this call.
     """
     import sys
+    from . import luks_tuning
+    luks_tuning.apply()
     saved_argv = sys.argv
     sys.argv = [
         saved_argv[0] if saved_argv else "monarch-iso-install",
@@ -179,42 +180,12 @@ def perform_filesystem_operations(arch_config: ArchConfig) -> None:
     for attempt in range(1, attempts + 1):
         udev_sync()
         try:
-            with _luks_format_policy():
-                handler.perform_filesystem_operations(**fs_kwargs)
+            handler.perform_filesystem_operations(**fs_kwargs)
             return
         except Exception as exc:
             if attempt == attempts or "unable to inform the kernel" not in str(exc):
                 raise
             info(f"› partition commit lost a udev race (attempt {attempt}/{attempts}); retrying")
-
-
-@contextmanager
-def _luks_format_policy():
-    # archinstall 4.5 exposes no sector-size argument on Luks2.encrypt.
-    luks = importlib.import_module('archinstall.lib.disk.luks')
-    original_encrypt = luks.Luks2.encrypt
-    luks.Luks2.encrypt = _with_calibration(original_encrypt)
-    try:
-        yield
-    finally:
-        luks.Luks2.encrypt = original_encrypt
-
-
-def _with_calibration(original_encrypt):
-    def encrypt(self, *args, **kwargs):
-        luks = importlib.import_module('archinstall.lib.disk.luks')
-        stop_calibration()
-        original_run = luks.run
-
-        def calibrated_run(command, *run_args, **run_kwargs):
-            return original_run(format_command(command), *run_args, **run_kwargs)
-
-        luks.run = calibrated_run
-        try:
-            return original_encrypt(self, *args, **kwargs)
-        finally:
-            luks.run = original_run
-    return encrypt
 
 
 @contextmanager

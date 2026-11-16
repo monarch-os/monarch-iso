@@ -716,7 +716,8 @@ run_partition_execute() {
         disk_abort_hook "Formatting LUKS2 on $root_partition_device failed"
       fi
       if ! printf "%s" "$password" |
-        cryptsetup open "$root_partition_device" monarch_root - 2>&1; then
+        cryptsetup open --persistent --allow-discards --perf-no_read_workqueue \
+          "$root_partition_device" monarch_root - 2>&1; then
         disk_abort_hook "Opening the encrypted root on $root_partition_device failed"
       fi
       root_mapper="/dev/mapper/monarch_root"

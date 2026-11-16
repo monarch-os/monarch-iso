@@ -528,7 +528,8 @@ def _write_limine_defaults(
     enable_fallback: bool | None = None,
 ) -> None:
     from .prebuilt_uki import with_sd_encrypt
-    cmdline = with_sd_encrypt(cmdline)
+    from .luks_tuning import with_cmdline_options
+    cmdline = with_sd_encrypt(with_cmdline_options(cmdline))
     if not cmdline.strip():
         raise RuntimeError("Could not compute kernel cmdline from install config")
     if "root=" not in cmdline:

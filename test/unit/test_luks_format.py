@@ -3,7 +3,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,7 +10,7 @@ from unittest import mock
 SOURCE = Path(__file__).resolve().parents[2] / 'configs/airootfs/usr/share/monarch-iso'
 sys.path.insert(0, str(SOURCE))
 from orchestrator import luks_calibration as luks_format
-from test.unit.test_installer_sanity_check import load_adapter
+from test.unit.test_luks_tuning import load_tuning
 
 
 class LuksFormatTest(unittest.TestCase):
@@ -64,7 +63,6 @@ class LuksFormatTest(unittest.TestCase):
         ]))
 
     def test_full_disk_policy_preserves_secrets_and_restores_runner_on_failure(self):
-        adapter = load_adapter()
         runner = mock.Mock(side_effect=RuntimeError('format failed'))
         command = self.command(self.device(64 * 1024 * 1024))
 
@@ -72,23 +70,14 @@ class LuksFormatTest(unittest.TestCase):
             def encrypt(self):
                 luks.run(command, input_data=b'test-only-passphrase')
 
-        original_encrypt = Luks2.encrypt
-        luks = types.SimpleNamespace(run=runner, Luks2=Luks2)
-
-        def filesystem_operations():
-            Luks2().encrypt()
-
-        handler = types.SimpleNamespace(perform_filesystem_operations=filesystem_operations)
-        with mock.patch.dict(sys.modules, {'archinstall.lib.disk.luks': luks}), \
-                mock.patch.object(adapter, 'FilesystemHandler', return_value=handler), \
-                mock.patch.object(adapter, 'udev_sync'), \
-                mock.patch.object(adapter, 'stop_calibration') as stop, \
-                self.assertRaisesRegex(RuntimeError, 'format failed'):
-            adapter.perform_filesystem_operations(types.SimpleNamespace(disk_config=object()))
-        runner.assert_called_once_with(command + ['--sector-size', '4096'], input_data=b'test-only-passphrase')
-        self.assertIs(luks.run, runner)
-        self.assertIs(Luks2.encrypt, original_encrypt)
-        stop.assert_called_once()
+        with load_tuning() as (tuning, luks, _), mock.patch.object(luks_format, 'stop_calibration') as stop:
+            luks.run = runner
+            wrapped = tuning._with_calibration(Luks2.encrypt)
+            with self.assertRaisesRegex(RuntimeError, 'format failed'):
+                wrapped(Luks2())
+            runner.assert_called_once_with(command + ['--sector-size', '4096'], input_data=b'test-only-passphrase')
+            self.assertIs(luks.run, runner)
+            stop.assert_called_once()
 
     @unittest.skipUnless(shutil.which('cryptsetup'), 'cryptsetup unavailable')
     def test_real_luks_headers_and_passwords_for_both_sector_sizes(self):

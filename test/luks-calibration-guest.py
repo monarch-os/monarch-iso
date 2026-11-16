@@ -124,9 +124,9 @@ def main():
         report['service'] = wait_for_calibration(calibration.UNIT)
         sys.argv = sys.argv[:1]
         from archinstall.lib.disk.luks import Luks2
-        from orchestrator.archinstall_adapter import _luks_format_policy
-        with _luks_format_policy():
-            exercise_formats(calibration, Luks2, report, args.expect_no_cache)
+        from orchestrator import luks_tuning
+        luks_tuning.apply()
+        exercise_formats(calibration, Luks2, report, args.expect_no_cache)
     finally:
         print(json.dumps(report, indent=2))
 
