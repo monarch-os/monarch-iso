@@ -10,6 +10,9 @@ ssh_live_root() {
 }
 
 bootstrap_live_root_ssh() {
+  local host=10.0.2.2
+  [[ ${MONARCH_INTEGRATION_OFFLINE:-false} == "true" ]] && host=10.0.2.100
+
   mkdir -p "$RUN_DIR/www"
   cat >"$RUN_DIR/www/bootstrap-live" <<EOF
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
@@ -38,7 +41,7 @@ EOF
     if ocr_screen | grep -qi password; then press ret; sleep 2; fi
     if ! wait_for_screen 'archiso [^l]*#' 30; then continue; fi
     press "ctrl-alt-f$vt"
-    type_text "curl -fsS http://10.0.2.2:$HTTP_PORT/bootstrap-live -o /tmp/bs && bash /tmp/bs"
+    type_text "curl -fsS http://$host:$HTTP_PORT/bootstrap-live -o /tmp/bs && bash /tmp/bs"
     press ret
     deadline=$((SECONDS + 60))
     until ssh_live_root true 2>/dev/null; do
