@@ -26,6 +26,7 @@ monarch-keyring
 
 # phase:early-runtime
 monarch
+monarch-systemd-stub
 
 # phase:early-luarocks
 lua51

@@ -119,6 +119,30 @@ log records whether the UKI was reused or why it fell
 back, and `TIMING F1.*` entries separate image writing, UUID refresh, base
 configuration, runtime packages, keyring initialization and UKI finalization.
 
+The ISO builds and installs `monarch-systemd-stub` from the selected package
+recipes. This x86_64-only downstream stub carries
+[systemd #43818](https://github.com/systemd/systemd/pull/43818), which was closed
+without merging: random-seed updates prefer the ESP containing the loaded UKI
+instead of the first ESP on the disk. Entropy handling remains enabled, and
+XBOOTLDR retains the first-ESP fallback. The separate stub path is
+`/usr/lib/monarch/boot/linuxx64.efi.stub`; systemd-owned files are untouched.
+Both prebuilding and Limine rebuilds select it through mkinitcpio's objcopy
+path, even when ukify is installed. Stub updates invalidate prebuilt reuse and
+the package's upgrade hook rebuilds installed UKIs. Administrator Limine
+overrides and direct ukify calls must preserve that explicit stub selection.
+
+The focused pre-kernel reproduction accepts an original or patched stub:
+
+```bash
+systemd-run --user --scope -p MemoryMax=6G -p MemorySwapMax=0 \
+  python3 test/support/stub-esp-probe.py /path/to/linuxx64.efi.stub /new/output-directory
+```
+
+It uses a disposable disk, two vCPU and 4 GiB RAM, and compares partition hashes
+and seed contents. `--stock` expects the original wrong-ESP write;
+`--layout single` and `--layout xbootldr` cover the fallback layouts. The payload
+deliberately stops before Linux; this does not replace full installation tests.
+
 At boot, the ISO checks SHA-256 hashes of the root image, its size metadata,
 the pacman mirror's packages and repository databases. Installation waits for that check before partitioning or
 formatting, including free-space installs. Missing or damaged files stop the

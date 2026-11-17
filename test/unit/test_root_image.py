@@ -257,7 +257,8 @@ class RootImageTest(unittest.TestCase):
         for file, contents in [('etc/vconsole.conf', 'KEYMAP=fr\n'),
                                ('etc/mkinitcpio.conf.d/nvidia.conf', 'MODULES+=(nvidia)\n'),
                                ('etc/modprobe.d/blacklist.conf', 'blacklist nouveau\n'),
-                               ('usr/lib/firmware/intel-ucode/new', 'microcode')]:
+                               ('usr/lib/firmware/intel-ucode/new', 'microcode'),
+                               ('usr/lib/monarch/boot/linuxx64.efi.stub', 'stub')]:
             with self.subTest(file=file):
                 path = self.root / file
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -265,7 +266,18 @@ class RootImageTest(unittest.TestCase):
                 self.assertNotEqual(prebuilt_uki.fingerprint(self.root), baseline)
                 path.unlink()
 
+    def test_prebuild_refuses_a_missing_monarch_stub(self):
+        builder = Path(__file__).resolve().parents[2] / 'builder/prebuild-uki.sh'
+        result = subprocess.run(['bash', str(builder), str(self.root)],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Monarch EFI stub missing', result.stderr)
+        self.assertFalse((self.root / 'var/lib/monarch-iso').exists())
+
     def test_built_uki_survives_default_console_configuration_and_deploys(self):
+        stub = self.root / 'usr/lib/monarch/boot/linuxx64.efi.stub'
+        stub.parent.mkdir(parents=True)
+        stub.write_bytes(b'stub')
         kernel = self.root / 'usr/lib/modules/1.0/pkgbase'
         kernel.parent.mkdir(parents=True)
         kernel.write_text('linux-cachyos\n')

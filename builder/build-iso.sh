@@ -69,6 +69,7 @@ else
   MONARCH_LOCAL_REVISION=$(git -C /monarch-source rev-parse --verify HEAD)
 fi
 bash /builder/build-monarch-package.sh "$offline_mirror_dir"
+bash /builder/build-stub-package.sh "$offline_mirror_dir"
 
 runtime_root=/tmp/monarch-runtime-root
 rm -rf "$runtime_root"
@@ -89,6 +90,8 @@ find_exact_package() {
 
 runtime_package=$(find_exact_package "$offline_mirror_dir" monarch || true)
 [[ -n $runtime_package ]] || { echo "ERROR: Monarch runtime package not found" >&2; exit 1; }
+stub_package=$(find_exact_package "$offline_mirror_dir" monarch-systemd-stub || true)
+[[ -n $stub_package ]] || { echo "ERROR: Monarch stub package not found" >&2; exit 1; }
 bsdtar -xf "$runtime_package" -C "$runtime_root"
 
 runtime_share="$runtime_root/usr/share/monarch"
@@ -157,7 +160,7 @@ mapfile -t all_packages < <(
 )
 
 source /builder/local-package-dependencies.sh
-load_local_package_dependencies "$runtime_package"
+load_local_package_dependencies "$runtime_package" "$stub_package"
 mapfile -t all_packages < <(
   for dependency in "${all_packages[@]}" "${local_depends[@]}"; do
     if ! local_dependency_satisfied "$dependency"; then
@@ -203,7 +206,7 @@ if ! resolved_package_files="$(
 fi
 
 mapfile -t required_package_files <<<"$resolved_package_files"
-required_package_files+=("${runtime_package##*/}")
+required_package_files+=("${runtime_package##*/}" "${stub_package##*/}")
 
 printf '%s\n' "${required_package_files[@]}" |
   bash /builder/prune-offline-mirror.sh "$offline_mirror_dir"
